@@ -173,7 +173,7 @@ func DownloadCodeArchive(url string) {
 		}
 		target_file_name := path.Join(taskFolder, f.Name)
 		if f.FileInfo().IsDir() {
-			err = os.MkdirAll(target_file_name, 0777)
+			err = os.MkdirAll(target_file_name, os.ModePerm)
 			if err != nil {
 				log.Fatal(err)
 			}

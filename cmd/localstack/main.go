@@ -35,7 +35,7 @@ func InitLsOpts() *LsOpts {
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		// optional or empty
-		CodeDownloadUrl: os.Getenv("CODE_ARCHIVE_DOWNLOAD_URL"),
+		CodeDownloadUrl: os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
 	}
 }
 
