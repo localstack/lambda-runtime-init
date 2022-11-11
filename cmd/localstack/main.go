@@ -46,9 +46,9 @@ func main() {
 	lsOpts := InitLsOpts()
 
 	// set up logging (logrus)
-	//log.SetFormatter(&log.JSONFormatter{})
-	//log.SetLevel(log.TraceLevel)
-	log.SetLevel(log.DebugLevel)
+	log.SetFormatter(&log.JSONFormatter{})
+	log.SetLevel(log.TraceLevel)
+	//log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
 	// download code archive if env variable is set
 	DownloadCodeArchive(lsOpts.CodeDownloadUrl)
