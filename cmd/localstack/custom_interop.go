@@ -68,6 +68,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 			RuntimeId:        lsOpts.RuntimeId,
 		},
 	}
+	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT")
+	invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	invokeTimeout := time.Second * time.Duration(invokeTimeoutSeconds)
+	server.delegate.SetInvokeTimeout(invokeTimeout)
 
 	// TODO: extract this
 	go func() {
@@ -88,12 +95,6 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 				}
 
 				invokeResp := &standalone.ResponseWriterProxy{}
-				invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT")
-				invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
-				if err != nil {
-					log.Fatalln(err)
-				}
-				invokeTimeout := time.Second * time.Duration(invokeTimeoutSeconds)
 				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
@@ -106,7 +107,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					CorrelationID:      "invokeCorrelationID",
 					NeedDebugLogs:      true,
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
-					DeadlineNs:         strconv.FormatInt(invokeTimeout.Nanoseconds(), 10),
+					//DeadlineNs:
 				})
 				if err != nil {
 					log.Fatalln(err)
