@@ -52,9 +52,9 @@ type InvokeRequest struct {
 
 type ErrorResponse struct {
 	ErrorMessage string   `json:"errorMessage"`
-	ErrorType    string   `json:"errorType"`
-	RequestId    string   `json:"requestId"`
-	StackTrace   []string `json:"stackTrace"`
+	ErrorType    string   `json:"errorType,omitempty"`
+	RequestId    string   `json:"requestId,omitempty"`
+	StackTrace   []string `json:"stackTrace,omitempty"`
 }
 
 func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, logCollector *LogCollector) (server *CustomInteropServer) {
@@ -99,12 +99,36 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					CorrelationID:      "invokeCorrelationID",
 					NeedDebugLogs:      true,
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
+					//DeadlineNs:
 				})
+				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
+				isErr := false
 				if err != nil {
-					log.Fatalln(err)
+					switch err {
+					case rapidcore.ErrInvokeTimeout:
+						log.Debugf("Got invoke timeout")
+						isErr = true
+						errorResponse := ErrorResponse{
+							ErrorMessage: fmt.Sprintf(
+								"%s %s Task timed out after %d.00 seconds",
+								time.Now().Format("2006-01-02T15:04:05Z"),
+								invokeR.InvokeId,
+								timeout,
+							),
+						}
+						jsonErrorResponse, err := json.Marshal(errorResponse)
+						if err != nil {
+							log.Fatalln("unable to marshall json timeout response")
+						}
+						_, err = invokeResp.Write(jsonErrorResponse)
+						if err != nil {
+							log.Fatalln("unable to write to response")
+						}
+					default:
+						log.Fatalln(err)
+					}
 				}
-				inv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT")
-				timeoutDuration, _ := time.ParseDuration(inv + "s")
+				timeoutDuration := time.Duration(timeout) * time.Second
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
 				PrintEndReports(invokeR.InvokeId, "", memorySize, invokeStart, timeoutDuration, logCollector)
 
@@ -117,8 +141,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 				var errR map[string]any
 				marshalErr := json.Unmarshal(invokeResp.Body, &errR)
 
-				isErr := false
-				if marshalErr == nil {
+				if !isErr && marshalErr == nil {
 					_, isErr = errR["errorType"]
 				}
 

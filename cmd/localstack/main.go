@@ -9,6 +9,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"runtime/debug"
+	"strconv"
 )
 
 type LsOpts struct {
@@ -72,12 +73,18 @@ func main() {
 	// initialize all flows and start runtime API
 	go sandbox.Create()
 
+	// get timeout
+	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT")
+	invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
+	if err != nil {
+		log.Fatalln(err)
+	}
 	// start runtime init
-	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), 30) // TODO: replace this with a custom init
+	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
 
 	// TODO: make the tracing server optional
 	// start blocking with the tracing server
-	err := http.ListenAndServe("0.0.0.0:"+lsOpts.InitTracingPort, http.DefaultServeMux)
+	err = http.ListenAndServe("0.0.0.0:"+lsOpts.InitTracingPort, http.DefaultServeMux)
 	if err != nil {
 		log.Fatal("Failed to start debug server")
 	}
