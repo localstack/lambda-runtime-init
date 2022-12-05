@@ -18,6 +18,7 @@ type LsOpts struct {
 	RuntimeId       string
 	InitTracingPort string
 	CodeDownloadUrl string
+	HotReloading    bool
 }
 
 func GetEnvOrDie(env string) string {
@@ -37,6 +38,7 @@ func InitLsOpts() *LsOpts {
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		// optional or empty
 		CodeDownloadUrl: os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
+		HotReloading:    os.Getenv("LOCALSTACK_HOT_RELOADING_ENABLED") != "",
 	}
 }
 
@@ -65,7 +67,8 @@ func main() {
 		SetTailLogOutput(logCollector)
 
 	defaultInterop := sandbox.InteropServer()
-	sandbox.SetInteropServer(NewCustomInteropServer(lsOpts, defaultInterop, logCollector))
+	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
+	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
 	}
@@ -81,6 +84,8 @@ func main() {
 	}
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
+
+	RunFileWatcher(interopServer, []string{"/var/task"}, lsOpts)
 
 	// TODO: make the tracing server optional
 	// start blocking with the tracing server

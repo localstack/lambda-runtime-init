@@ -196,6 +196,13 @@ func DownloadCodeArchive(url string) {
 
 }
 
+func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsOpts) {
+	if !opts.HotReloading {
+		return
+	}
+
+}
+
 func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.Time, time.Time) {
 	additionalFunctionEnvironmentVariables := map[string]string{}
 
