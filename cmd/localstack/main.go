@@ -59,8 +59,13 @@ func main() {
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)
 	logCollector := NewLogCollector()
+	closeFileWatcher := make(chan bool)
 	sandbox := rapidcore.
 		NewSandboxBuilder(bootstrap).
+		AddShutdownFunc(func() {
+			log.Debugln("Closing file watcher")
+			closeFileWatcher <- true
+		}).
 		AddShutdownFunc(func() { os.Exit(0) }).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
@@ -82,10 +87,10 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	go RunFileWatcher(interopServer, []string{"/var/task"}, lsOpts, closeFileWatcher)
+
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
-
-	RunFileWatcher(interopServer, []string{"/var/task"}, lsOpts)
 
 	// TODO: make the tracing server optional
 	// start blocking with the tracing server
@@ -93,5 +98,4 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to start debug server")
 	}
-
 }

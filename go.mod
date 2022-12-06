@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/aws/aws-lambda-go v1.20.0
+	github.com/fsnotify/fsnotify v1.6.0
 	github.com/go-chi/chi v4.1.2+incompatible
 	github.com/go-chi/render v1.0.1
 	github.com/google/uuid v1.1.2

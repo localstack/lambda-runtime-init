@@ -13,6 +13,7 @@ import (
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"io"
+	"io/fs"
 	"math"
 	"net/http"
 	"os"
@@ -20,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -196,11 +199,128 @@ func DownloadCodeArchive(url string) {
 
 }
 
-func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsOpts) {
+func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsOpts, done <-chan bool) {
 	if !opts.HotReloading {
 		return
 	}
+	defaultDuration := 500 * time.Millisecond
+	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Errorln("Hot reloading disabled due to filewatcher error.")
+		log.Errorln(err)
+		return
+	}
+	defer watcher.Close()
 
+	changeChannel := make(chan string, 10)
+	defer close(changeChannel)
+	// Start listening for events.
+	go func(channel chan<- string) {
+		var watchedFolders []string
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				log.Debugln("Filewatcher event: ", event)
+				if event.Has(fsnotify.Create) {
+					stat, err := os.Stat(event.Name)
+					if err != nil {
+						log.Errorln("Error stating event file: ", event.Name, err)
+					} else if stat.IsDir() {
+						subfolders := getSubFolders(event.Name)
+						for _, folder := range subfolders {
+							err = watcher.Add(folder)
+							watchedFolders = append(watchedFolders, folder)
+							if err != nil {
+								log.Errorln("Error watching folder: ", folder, err)
+							}
+						}
+					}
+					// remove in case of remove / rename (rename within the folder will trigger a separate create event)
+				} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+					// remove all file watchers if it is in our folders list
+					toBeRemovedDirs, newWatchedFolders := getSubFoldersInList(event.Name, watchedFolders)
+					watchedFolders = newWatchedFolders
+					for _, dir := range toBeRemovedDirs {
+						err = watcher.Remove(dir)
+						if err != nil {
+							log.Warnln("Error removing path: ", event.Name, err)
+						}
+					}
+				}
+				channel <- event.Name
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					log.Println("error:", err)
+					return
+				}
+				log.Println("error:", err)
+			}
+		}
+	}(changeChannel)
+
+	// debouncer to limit restarts
+	go func(channel <-chan string, duration time.Duration) {
+		timer := time.NewTimer(duration)
+		for {
+			select {
+			case _, more := <-channel:
+				if !more {
+					timer.Stop()
+					return
+				}
+				timer.Reset(duration)
+			case <-timer.C:
+				log.Println("Resetting environment...")
+				server.Reset("HotReload", 2000)
+			}
+		}
+
+	}(changeChannel, defaultDuration)
+
+	// Add all target paths and subfolders
+	for _, targetPath := range targetPaths {
+		subfolders := getSubFolders(targetPath)
+		log.Infoln("Subfolders: ", subfolders)
+		for _, target := range subfolders {
+			err = watcher.Add(target)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+	<-done
+	log.Infoln("Closing down filewatcher.")
+
+}
+
+func getSubFolders(dirPath string) []string {
+	var subfolders []string
+	err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			subfolders = append(subfolders, path)
+		}
+		return err
+	})
+	if err != nil {
+		log.Errorln("Error listing directory contents: ", err)
+		return subfolders
+	}
+	return subfolders
+}
+
+func getSubFoldersInList(prefix string, pathList []string) (old_folders []string, new_folders []string) {
+	for _, item := range pathList {
+		if strings.HasPrefix(item, prefix) {
+			old_folders = append(old_folders, item)
+		} else {
+			new_folders = append(new_folders, item)
+		}
+	}
+	return
 }
 
 func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.Time, time.Time) {
