@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
+	"go.amzn.com/cmd/localstack/filenotify"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"io"
@@ -205,7 +206,7 @@ func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsO
 	}
 	defaultDuration := 500 * time.Millisecond
 	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
-	watcher, err := fsnotify.NewWatcher()
+	watcher, err := filenotify.New(200 * time.Millisecond)
 	if err != nil {
 		log.Errorln("Hot reloading disabled due to filewatcher error.")
 		log.Errorln(err)
@@ -220,11 +221,11 @@ func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsO
 		var watchedFolders []string
 		for {
 			select {
-			case event, ok := <-watcher.Events:
+			case event, ok := <-watcher.Events():
 				if !ok {
 					return
 				}
-				log.Debugln("Filewatcher event: ", event)
+				log.Debugln("FileWatcher got event: ", event)
 				if event.Has(fsnotify.Create) {
 					stat, err := os.Stat(event.Name)
 					if err != nil {
@@ -252,7 +253,7 @@ func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsO
 					}
 				}
 				channel <- event.Name
-			case err, ok := <-watcher.Errors:
+			case err, ok := <-watcher.Errors():
 				if !ok {
 					log.Println("error:", err)
 					return
@@ -265,6 +266,11 @@ func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsO
 	// debouncer to limit restarts
 	go func(channel <-chan string, duration time.Duration) {
 		timer := time.NewTimer(duration)
+		// immediately stop the timer, since we do not want to reload right at the startup
+		if !timer.Stop() {
+			// we have to drain the channel in case the timer already fired
+			<-timer.C
+		}
 		for {
 			select {
 			case _, more := <-channel:
