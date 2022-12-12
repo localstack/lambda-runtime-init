@@ -26,15 +26,20 @@ type FileWatcher interface {
 	Close() error
 }
 
-// New tries to use a fs-event watcher, and falls back to the poller if there is an error
-func New(interval time.Duration) (FileWatcher, error) {
-	// cheap check if we are in Docker desktop or not.
-	// We could also inspect the mounts, but that would be more complicated and needs more parsing
+func useEventWatcher() bool {
+	// Whether to use an event watcher or polling mechanism
 	var utsname unix.Utsname
 	err := unix.Uname(&utsname)
 	release := strings.TrimRight(string(utsname.Release[:]), "\x00")
 	log.Println("Release detected: ", release)
-	if err == nil && !(strings.Contains(release, "linuxkit") || strings.Contains(release, "WSL2")) {
+	return err == nil && !(strings.Contains(release, "linuxkit") || strings.Contains(release, "WSL2"))
+}
+
+// New tries to use a fs-event watcher, and falls back to the poller if there is an error
+func New(interval time.Duration) (FileWatcher, error) {
+	// cheap check if we are in Docker desktop or not.
+	// We could also inspect the mounts, but that would be more complicated and needs more parsing
+	if useEventWatcher() {
 		if watcher, err := NewEventWatcher(); err == nil {
 			log.Debugln("Using event based filewatcher")
 			return watcher, nil

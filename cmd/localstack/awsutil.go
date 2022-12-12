@@ -7,6 +7,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
@@ -200,105 +201,148 @@ func DownloadCodeArchive(url string) {
 
 }
 
-func RunFileWatcher(server *CustomInteropServer, targetPaths []string, opts *LsOpts, done <-chan bool) {
-	if !opts.HotReloading {
-		return
-	}
-	defaultDuration := 500 * time.Millisecond
-	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
+type ChangeListener struct {
+	watcher        filenotify.FileWatcher
+	changeChannel  chan string
+	watchedFolders []string
+}
+
+func createChangeListener() (*ChangeListener, error) {
 	watcher, err := filenotify.New(200 * time.Millisecond)
 	if err != nil {
-		log.Errorln("Hot reloading disabled due to filewatcher error.")
-		log.Errorln(err)
-		return
+		log.Errorln("Cannot create change listener due to filewatcher error.", err)
+		return nil, err
 	}
-	defer watcher.Close()
+	return &ChangeListener{
+		changeChannel: make(chan string, 10),
+		watcher:       watcher,
+	}, nil
+}
 
-	changeChannel := make(chan string, 10)
-	defer close(changeChannel)
-	// Start listening for events.
-	go func(channel chan<- string) {
-		var watchedFolders []string
-		for {
-			select {
-			case event, ok := <-watcher.Events():
-				if !ok {
-					return
-				}
-				log.Debugln("FileWatcher got event: ", event)
-				if event.Has(fsnotify.Create) {
-					stat, err := os.Stat(event.Name)
-					if err != nil {
-						log.Errorln("Error stating event file: ", event.Name, err)
-					} else if stat.IsDir() {
-						subfolders := getSubFolders(event.Name)
-						for _, folder := range subfolders {
-							err = watcher.Add(folder)
-							watchedFolders = append(watchedFolders, folder)
-							if err != nil {
-								log.Errorln("Error watching folder: ", folder, err)
-							}
-						}
-					}
-					// remove in case of remove / rename (rename within the folder will trigger a separate create event)
-				} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					// remove all file watchers if it is in our folders list
-					toBeRemovedDirs, newWatchedFolders := getSubFoldersInList(event.Name, watchedFolders)
-					watchedFolders = newWatchedFolders
-					for _, dir := range toBeRemovedDirs {
-						err = watcher.Remove(dir)
+func (c *ChangeListener) watch() {
+	for {
+		select {
+		case event, ok := <-c.watcher.Events():
+			if !ok {
+				return
+			}
+			log.Debugln("FileWatcher got event: ", event)
+			if event.Has(fsnotify.Create) {
+				stat, err := os.Stat(event.Name)
+				if err != nil {
+					log.Errorln("Error stating event file: ", event.Name, err)
+				} else if stat.IsDir() {
+					subfolders := getSubFolders(event.Name)
+					for _, folder := range subfolders {
+						err = c.watcher.Add(folder)
+						c.watchedFolders = append(c.watchedFolders, folder)
 						if err != nil {
-							log.Warnln("Error removing path: ", event.Name, err)
+							log.Errorln("Error watching folder: ", folder, err)
 						}
 					}
 				}
-				channel <- event.Name
-			case err, ok := <-watcher.Errors():
-				if !ok {
-					log.Println("error:", err)
-					return
+				// remove in case of remove / rename (rename within the folder will trigger a separate create event)
+			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+				// remove all file watchers if it is in our folders list
+				toBeRemovedDirs, newWatchedFolders := getSubFoldersInList(event.Name, c.watchedFolders)
+				c.watchedFolders = newWatchedFolders
+				for _, dir := range toBeRemovedDirs {
+					err := c.watcher.Remove(dir)
+					if err != nil {
+						log.Warnln("Error removing path: ", event.Name, err)
+					}
 				}
+			}
+			c.changeChannel <- event.Name
+		case err, ok := <-c.watcher.Errors():
+			if !ok {
 				log.Println("error:", err)
+				return
 			}
+			log.Println("error:", err)
 		}
-	}(changeChannel)
+	}
+}
 
-	// debouncer to limit restarts
-	go func(channel <-chan string, duration time.Duration) {
-		timer := time.NewTimer(duration)
-		// immediately stop the timer, since we do not want to reload right at the startup
-		if !timer.Stop() {
-			// we have to drain the channel in case the timer already fired
-			<-timer.C
-		}
-		for {
-			select {
-			case _, more := <-channel:
-				if !more {
-					timer.Stop()
-					return
-				}
-				timer.Reset(duration)
-			case <-timer.C:
-				log.Println("Resetting environment...")
-				server.Reset("HotReload", 2000)
-			}
-		}
-
-	}(changeChannel, defaultDuration)
-
+func (c *ChangeListener) addTargetPaths(targetPaths []string) {
 	// Add all target paths and subfolders
 	for _, targetPath := range targetPaths {
 		subfolders := getSubFolders(targetPath)
 		log.Infoln("Subfolders: ", subfolders)
 		for _, target := range subfolders {
-			err = watcher.Add(target)
+			err := c.watcher.Add(target)
 			if err != nil {
 				log.Fatal(err)
 			}
 		}
 	}
-	<-done
+}
+
+func (c *ChangeListener) close() error {
+	return c.watcher.Close()
+}
+
+func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
+	for {
+		_, more := <-changeChannel
+		if !more {
+			return
+		}
+		log.Println("Resetting environment...")
+		_, err := server.Reset("HotReload", 2000)
+		if err != nil {
+			log.Warnln("Error resetting server: ", err)
+		}
+	}
+
+}
+
+func debounceChannel(changeChannel <-chan string, duration time.Duration) <-chan bool {
+	resultChannel := make(chan bool, 10)
+	// debouncer to limit restarts
+	timer := time.NewTimer(duration)
+	// immediately stop the timer, since we do not want to reload right at the startup
+	if !timer.Stop() {
+		// we have to drain the channel in case the timer already fired
+		<-timer.C
+	}
+	go func() {
+		for {
+			select {
+			case _, more := <-changeChannel:
+				if !more {
+					timer.Stop()
+					close(resultChannel)
+					return
+				}
+				timer.Reset(duration)
+			case <-timer.C:
+				resultChannel <- true
+			}
+		}
+	}()
+	return resultChannel
+}
+
+func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, opts *LsOpts, ctx context.Context) {
+	if !opts.HotReloading {
+		log.Debugln("Hot reloading disabled.")
+		return
+	}
+	defaultDuration := 500 * time.Millisecond
+	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
+	changeListener, err := createChangeListener()
+	if err != nil {
+		log.Errorln("Hot reloading disabled due to change listener error.", err)
+		return
+	}
+	defer changeListener.close()
+	go changeListener.watch()
+	changeListener.addTargetPaths(targetPaths)
+	debouncedChannel := debounceChannel(changeListener.changeChannel, defaultDuration)
+	go resetListener(debouncedChannel, server)
+
+	<-ctx.Done()
 	log.Infoln("Closing down filewatcher.")
 
 }
@@ -318,12 +362,12 @@ func getSubFolders(dirPath string) []string {
 	return subfolders
 }
 
-func getSubFoldersInList(prefix string, pathList []string) (old_folders []string, new_folders []string) {
-	for _, item := range pathList {
-		if strings.HasPrefix(item, prefix) {
-			old_folders = append(old_folders, item)
+func getSubFoldersInList(prefix string, pathList []string) (oldFolders []string, newFolders []string) {
+	for _, pathItem := range pathList {
+		if strings.HasPrefix(pathItem, prefix) {
+			oldFolders = append(oldFolders, pathItem)
 		} else {
-			new_folders = append(new_folders, item)
+			newFolders = append(newFolders, pathItem)
 		}
 	}
 	return

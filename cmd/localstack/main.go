@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore"
 	"net/http"
@@ -59,12 +60,12 @@ func main() {
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)
 	logCollector := NewLogCollector()
-	closeFileWatcher := make(chan bool)
+	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
 	sandbox := rapidcore.
 		NewSandboxBuilder(bootstrap).
 		AddShutdownFunc(func() {
 			log.Debugln("Closing file watcher")
-			closeFileWatcher <- true
+			cancelFileWatcher()
 		}).
 		AddShutdownFunc(func() { os.Exit(0) }).
 		SetExtensionsFlag(true).
@@ -87,7 +88,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	go RunFileWatcher(interopServer, []string{"/var/task"}, lsOpts, closeFileWatcher)
+	go RunHotReloadingListener(interopServer, []string{"/var/task"}, lsOpts, fileWatcherContext)
 
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
