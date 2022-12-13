@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
-	"go.amzn.com/cmd/localstack/filenotify"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"io"
@@ -23,8 +22,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -201,87 +198,6 @@ func DownloadCodeArchive(url string) {
 
 }
 
-type ChangeListener struct {
-	watcher        filenotify.FileWatcher
-	changeChannel  chan string
-	watchedFolders []string
-}
-
-func createChangeListener() (*ChangeListener, error) {
-	watcher, err := filenotify.New(200 * time.Millisecond)
-	if err != nil {
-		log.Errorln("Cannot create change listener due to filewatcher error.", err)
-		return nil, err
-	}
-	return &ChangeListener{
-		changeChannel: make(chan string, 10),
-		watcher:       watcher,
-	}, nil
-}
-
-func (c *ChangeListener) watch() {
-	for {
-		select {
-		case event, ok := <-c.watcher.Events():
-			if !ok {
-				return
-			}
-			log.Debugln("FileWatcher got event: ", event)
-			if event.Has(fsnotify.Create) {
-				stat, err := os.Stat(event.Name)
-				if err != nil {
-					log.Errorln("Error stating event file: ", event.Name, err)
-				} else if stat.IsDir() {
-					subfolders := getSubFolders(event.Name)
-					for _, folder := range subfolders {
-						err = c.watcher.Add(folder)
-						c.watchedFolders = append(c.watchedFolders, folder)
-						if err != nil {
-							log.Errorln("Error watching folder: ", folder, err)
-						}
-					}
-				}
-				// remove in case of remove / rename (rename within the folder will trigger a separate create event)
-			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				// remove all file watchers if it is in our folders list
-				toBeRemovedDirs, newWatchedFolders := getSubFoldersInList(event.Name, c.watchedFolders)
-				c.watchedFolders = newWatchedFolders
-				for _, dir := range toBeRemovedDirs {
-					err := c.watcher.Remove(dir)
-					if err != nil {
-						log.Warnln("Error removing path: ", event.Name, err)
-					}
-				}
-			}
-			c.changeChannel <- event.Name
-		case err, ok := <-c.watcher.Errors():
-			if !ok {
-				log.Println("error:", err)
-				return
-			}
-			log.Println("error:", err)
-		}
-	}
-}
-
-func (c *ChangeListener) addTargetPaths(targetPaths []string) {
-	// Add all target paths and subfolders
-	for _, targetPath := range targetPaths {
-		subfolders := getSubFolders(targetPath)
-		log.Infoln("Subfolders: ", subfolders)
-		for _, target := range subfolders {
-			err := c.watcher.Add(target)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-}
-
-func (c *ChangeListener) close() error {
-	return c.watcher.Close()
-}
-
 func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 	for {
 		_, more := <-changeChannel
@@ -297,50 +213,22 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 }
 
-func debounceChannel(changeChannel <-chan string, duration time.Duration) <-chan bool {
-	resultChannel := make(chan bool, 10)
-	// debouncer to limit restarts
-	timer := time.NewTimer(duration)
-	// immediately stop the timer, since we do not want to reload right at the startup
-	if !timer.Stop() {
-		// we have to drain the channel in case the timer already fired
-		<-timer.C
-	}
-	go func() {
-		for {
-			select {
-			case _, more := <-changeChannel:
-				if !more {
-					timer.Stop()
-					close(resultChannel)
-					return
-				}
-				timer.Reset(duration)
-			case <-timer.C:
-				resultChannel <- true
-			}
-		}
-	}()
-	return resultChannel
-}
-
 func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, opts *LsOpts, ctx context.Context) {
 	if !opts.HotReloading {
 		log.Debugln("Hot reloading disabled.")
 		return
 	}
-	defaultDuration := 500 * time.Millisecond
+	defaultDebouncingDuration := 500 * time.Millisecond
 	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
-	changeListener, err := createChangeListener()
+	changeListener, err := NewChangeListener(defaultDebouncingDuration)
 	if err != nil {
 		log.Errorln("Hot reloading disabled due to change listener error.", err)
 		return
 	}
-	defer changeListener.close()
-	go changeListener.watch()
-	changeListener.addTargetPaths(targetPaths)
-	debouncedChannel := debounceChannel(changeListener.changeChannel, defaultDuration)
-	go resetListener(debouncedChannel, server)
+	defer changeListener.Close()
+	go changeListener.Start()
+	changeListener.AddTargetPaths(targetPaths)
+	go resetListener(changeListener.debouncedChannel, server)
 
 	<-ctx.Done()
 	log.Infoln("Closing down filewatcher.")
