@@ -41,6 +41,7 @@ func (c *ChangeListener) Watch() {
 		select {
 		case event, ok := <-c.watcher.Events():
 			if !ok {
+				close(c.changeChannel)
 				return
 			}
 			log.Debugln("FileWatcher got event: ", event)
