@@ -7,12 +7,14 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"io"
+	"io/fs"
 	"math"
 	"net/http"
 	"os"
@@ -194,6 +196,69 @@ func DownloadCodeArchive(url string) {
 		rc.Close()
 	}
 
+}
+
+func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
+	for {
+		_, more := <-changeChannel
+		if !more {
+			return
+		}
+		log.Println("Resetting environment...")
+		_, err := server.Reset("HotReload", 2000)
+		if err != nil {
+			log.Warnln("Error resetting server: ", err)
+		}
+	}
+
+}
+
+func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, opts *LsOpts, ctx context.Context) {
+	if !opts.HotReloading {
+		log.Debugln("Hot reloading disabled.")
+		return
+	}
+	defaultDebouncingDuration := 500 * time.Millisecond
+	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
+	changeListener, err := NewChangeListener(defaultDebouncingDuration)
+	if err != nil {
+		log.Errorln("Hot reloading disabled due to change listener error.", err)
+		return
+	}
+	defer changeListener.Close()
+	go changeListener.Start()
+	changeListener.AddTargetPaths(targetPaths)
+	go resetListener(changeListener.debouncedChannel, server)
+
+	<-ctx.Done()
+	log.Infoln("Closing down filewatcher.")
+
+}
+
+func getSubFolders(dirPath string) []string {
+	var subfolders []string
+	err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			subfolders = append(subfolders, path)
+		}
+		return err
+	})
+	if err != nil {
+		log.Errorln("Error listing directory contents: ", err)
+		return subfolders
+	}
+	return subfolders
+}
+
+func getSubFoldersInList(prefix string, pathList []string) (oldFolders []string, newFolders []string) {
+	for _, pathItem := range pathList {
+		if strings.HasPrefix(pathItem, prefix) {
+			oldFolders = append(oldFolders, pathItem)
+		} else {
+			newFolders = append(newFolders, pathItem)
+		}
+	}
+	return
 }
 
 func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.Time, time.Time) {

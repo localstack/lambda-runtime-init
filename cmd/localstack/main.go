@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore"
 	"net/http"
@@ -18,6 +19,7 @@ type LsOpts struct {
 	RuntimeId       string
 	InitTracingPort string
 	CodeDownloadUrl string
+	HotReloading    bool
 }
 
 func GetEnvOrDie(env string) string {
@@ -37,6 +39,7 @@ func InitLsOpts() *LsOpts {
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		// optional or empty
 		CodeDownloadUrl: os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
+		HotReloading:    os.Getenv("LOCALSTACK_HOT_RELOADING_ENABLED") != "",
 	}
 }
 
@@ -57,15 +60,21 @@ func main() {
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)
 	logCollector := NewLogCollector()
+	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
 	sandbox := rapidcore.
 		NewSandboxBuilder(bootstrap).
+		AddShutdownFunc(func() {
+			log.Debugln("Closing file watcher")
+			cancelFileWatcher()
+		}).
 		AddShutdownFunc(func() { os.Exit(0) }).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetTailLogOutput(logCollector)
 
 	defaultInterop := sandbox.InteropServer()
-	sandbox.SetInteropServer(NewCustomInteropServer(lsOpts, defaultInterop, logCollector))
+	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
+	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
 	}
@@ -79,6 +88,8 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	go RunHotReloadingListener(interopServer, []string{"/var/task"}, lsOpts, fileWatcherContext)
+
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
 
@@ -88,5 +99,4 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to start debug server")
 	}
-
 }
