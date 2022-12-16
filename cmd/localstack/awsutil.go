@@ -213,8 +213,8 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 }
 
-func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, opts *LsOpts, ctx context.Context) {
-	if !opts.HotReloading {
+func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context) {
+	if len(targetPaths) == 1 && targetPaths[0] == "" {
 		log.Debugln("Hot reloading disabled.")
 		return
 	}
