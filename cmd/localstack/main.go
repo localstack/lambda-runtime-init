@@ -11,15 +11,16 @@ import (
 	"os"
 	"runtime/debug"
 	"strconv"
+	"strings"
 )
 
 type LsOpts struct {
-	InteropPort     string
-	RuntimeEndpoint string
-	RuntimeId       string
-	InitTracingPort string
-	CodeDownloadUrl string
-	HotReloading    bool
+	InteropPort       string
+	RuntimeEndpoint   string
+	RuntimeId         string
+	InitTracingPort   string
+	CodeDownloadUrl   string
+	HotReloadingPaths []string
 }
 
 func GetEnvOrDie(env string) string {
@@ -38,8 +39,8 @@ func InitLsOpts() *LsOpts {
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		// optional or empty
-		CodeDownloadUrl: os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
-		HotReloading:    os.Getenv("LOCALSTACK_HOT_RELOADING_ENABLED") != "",
+		CodeDownloadUrl:   os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
+		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 	}
 }
 
@@ -88,7 +89,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	go RunHotReloadingListener(interopServer, []string{"/var/task"}, lsOpts, fileWatcherContext)
+	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
 
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
