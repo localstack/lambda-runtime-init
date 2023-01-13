@@ -21,6 +21,8 @@ type LsOpts struct {
 	InitTracingPort   string
 	CodeDownloadUrl   string
 	HotReloadingPaths []string
+	EnableDnsServer   string
+	LocalstackIP      string
 }
 
 func GetEnvOrDie(env string) string {
@@ -41,6 +43,8 @@ func InitLsOpts() *LsOpts {
 		// optional or empty
 		CodeDownloadUrl:   os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
+		EnableDnsServer:   os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
+		LocalstackIP:      os.Getenv("LOCALSTACK_HOSTNAME"),
 	}
 }
 
@@ -57,6 +61,9 @@ func main() {
 	log.SetReportCaller(true)
 	// download code archive if env variable is set
 	DownloadCodeArchive(lsOpts.CodeDownloadUrl)
+	// enable dns server
+	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
+	go RunDNSRewriter(lsOpts, dnsServerContext)
 	// parse CLI args
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)
@@ -67,6 +74,7 @@ func main() {
 		AddShutdownFunc(func() {
 			log.Debugln("Closing file watcher")
 			cancelFileWatcher()
+			stopDnsServer()
 		}).
 		AddShutdownFunc(func() { os.Exit(0) }).
 		SetExtensionsFlag(true).
