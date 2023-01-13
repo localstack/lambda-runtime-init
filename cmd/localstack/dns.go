@@ -22,6 +22,7 @@ func (D DNSRewriteForwardHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	response, _, err := client.Exchange(r, D.upstreamServer+":53")
 	if err != nil {
 		log.Errorln("Error connecting to upstream: ", err)
+		return
 	}
 	for _, rr := range response.Answer {
 		switch rr.Header().Rrtype {

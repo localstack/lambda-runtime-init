@@ -72,7 +72,7 @@ func main() {
 	sandbox := rapidcore.
 		NewSandboxBuilder(bootstrap).
 		AddShutdownFunc(func() {
-			log.Debugln("Closing file watcher")
+			log.Debugln("Closing contexts")
 			cancelFileWatcher()
 			stopDnsServer()
 		}).
