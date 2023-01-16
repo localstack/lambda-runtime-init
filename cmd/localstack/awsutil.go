@@ -213,6 +213,23 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 }
 
+func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
+	if opts.EnableDnsServer != "1" {
+		log.Debugln("Dns server disabled")
+		return
+	}
+	dnsForwarder, err := NewDnsForwarder(opts.LocalstackIP)
+	if err != nil {
+		log.Errorln("Error creating dns forwarder.")
+		return
+	}
+	defer dnsForwarder.Shutdown()
+	dnsForwarder.Start()
+
+	<-ctx.Done()
+	log.Debugln("Shutting down dns server")
+}
+
 func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context) {
 	if len(targetPaths) == 1 && targetPaths[0] == "" {
 		log.Debugln("Hot reloading disabled.")
