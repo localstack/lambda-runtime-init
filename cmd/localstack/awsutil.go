@@ -221,6 +221,7 @@ func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
 	dnsForwarder, err := NewDnsForwarder(opts.LocalstackIP)
 	if err != nil {
 		log.Errorln("Error creating dns forwarder.")
+		return
 	}
 	defer dnsForwarder.Shutdown()
 	dnsForwarder.Start()
