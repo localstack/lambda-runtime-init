@@ -79,8 +79,6 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 			}
 
 			go func() {
-				receivedPayload := string(bytess)
-				log.WithField("receivedPayload", receivedPayload).Debugln("hi")
 				err = json.Unmarshal(bytess, &invokeR)
 				if err != nil {
 					log.Error(err)
@@ -93,13 +91,25 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 				invokeStart := time.Now()
 				err = server.Invoke(invokeResp, &interop.Invoke{
 					ID:                 invokeR.InvokeId,
-					TraceID:            "TraceID",                          // r.Header.Get("X-Amzn-Trace-Id"),
-					LambdaSegmentID:    "LambdaSegmentID",                  // r.Header.Get("X-Amzn-Segment-Id"),
-					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
-					CorrelationID:      "invokeCorrelationID",
-					NeedDebugLogs:      true,
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
-					//DeadlineNs:
+					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
+					NeedDebugLogs:      true,
+					CorrelationID:      "invokeCorrelationID",
+					// TODO: should we use the env _X_AMZN_TRACE_ID here or get the value from the request headers from the direct invoke?
+					//		for now we just set a "real" static value
+					TraceID: "Root=1-53cfd31b-192638fa13e39d2c2bcea001;Parent=365fb4b15f2e3987;Sampled=0", // r.Header.Get("X-Amzn-Trace-Id"),
+					//TraceID: GetEnvOrDie("_X_AMZN_TRACE_ID"), // r.Header.Get("X-Amzn-Trace-Id"),
+					// TODO: set correct segment ID from request
+					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
+					//CognitoIdentityID:     "",
+					//CognitoIdentityPoolID: "",
+					//DeadlineNs:            "",
+					//ClientContext:         "",
+					//ContentType:           "",
+					//ReservationToken:      "",
+					//VersionID:             "",
+					//InvokeReceivedTime:    0,
+					//ResyncState:           interop.Resync{},
 				})
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
