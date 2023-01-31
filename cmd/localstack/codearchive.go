@@ -37,6 +37,7 @@ func DownloadCodeArchive(url string, targetPath string) error {
 	// download and unzip code archive
 	log.Infoln("Downloading code archive")
 	// create tmp directory
+	// empty string will make use of the default tmp directory
 	tmpDir, err := os.MkdirTemp("", "localstack-code-archive")
 	if err != nil {
 		return err
