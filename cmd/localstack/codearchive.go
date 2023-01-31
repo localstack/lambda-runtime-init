@@ -2,31 +2,33 @@ package main
 
 import (
 	"archive/zip"
-	"errors"
+	"encoding/json"
 	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 )
+
+type ArchiveDownload struct {
+	Url        string `json:"url"`
+	TargetPath string `json:"target_path"`
+}
 
 func DownloadCodeArchives(archives string) error {
 	if archives == "" {
 		log.Debugln("No code archives set. Skipping download.")
 		return nil
 	}
-	parts := strings.Split(archives, ",")
-	for _, part := range parts {
-		subparts := strings.Split(part, ":")
-		if len(subparts) != 2 {
-			log.Warnln("Invalid format for LocalStack code archives received: " + archives)
-			return errors.New("invalid format for LocalStack code archives received")
-		}
-		dlUrl := subparts[0]
-		dlPath := subparts[1]
-		if err := DownloadCodeArchive(dlUrl, dlPath); err != nil {
+	var parsedArchives []ArchiveDownload
+	err := json.Unmarshal([]byte(archives), &parsedArchives)
+	if err != nil {
+		return err
+	}
+
+	for _, downloadArchive := range parsedArchives {
+		if err := DownloadCodeArchive(downloadArchive.Url, downloadArchive.TargetPath); err != nil {
 			return err
 		}
 	}
