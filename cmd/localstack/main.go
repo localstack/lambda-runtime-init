@@ -19,7 +19,7 @@ type LsOpts struct {
 	RuntimeEndpoint   string
 	RuntimeId         string
 	InitTracingPort   string
-	CodeDownloadUrl   string
+	CodeArchives      string
 	HotReloadingPaths []string
 	EnableDnsServer   string
 	LocalstackIP      string
@@ -41,7 +41,7 @@ func InitLsOpts() *LsOpts {
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		// optional or empty
-		CodeDownloadUrl:   os.Getenv("LOCALSTACK_CODE_ARCHIVE_DOWNLOAD_URL"),
+		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 		EnableDnsServer:   os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		LocalstackIP:      os.Getenv("LOCALSTACK_HOSTNAME"),
@@ -59,8 +59,11 @@ func main() {
 	//log.SetLevel(log.TraceLevel)
 	log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
+
 	// download code archive if env variable is set
-	DownloadCodeArchive(lsOpts.CodeDownloadUrl)
+	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
+		log.Fatal("Failed to download code archives")
+	}
 	// enable dns server
 	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
 	go RunDNSRewriter(lsOpts, dnsServerContext)
