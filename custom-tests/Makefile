@@ -1,16 +1,14 @@
-build:
-	docker build -t rapid-debug .
+# TODO: build arm-compatible
 
-run:
-	make build
-	docker run -d -p 9000:8080 --cap-add=SYS_PTRACE rapid-debug:latest
+build-rapid:
+	cd .. && GC_FLAGS="all=-N -l" make compile-lambda-linux
 
-clean:
-	rm -f aws-lambda-rie
-	docker rm -f rapid-debug
+build-delve/dlv:
+	docker run --rm -v $$(pwd)/build-delve/:/app/ golang:1.18.2 bash -c "cd /app && ./build.sh"
 
-debug-run: clean build
-	cd .. && make compile-lambda-linux
-	mv ../bin/aws-lambda-rie-x86_64 ./aws-lambda-rie
-	docker run --cap-add=SYS_PTRACE -d -v $(shell pwd)/dlv:/dlv -v $(shell pwd)/lambda-entrypoint.sh:/lambda-entrypoint.sh -v $(shell pwd)/aws-lambda-rie:/usr/local/bin/aws-lambda-rie -p 9000:8080 -p 9001:8081 -p 40000:40000 -p 9563:9563 --env LOCALSTACK_RIE_DEBUG_PORT=40000 --name rapid-debug rapid-debug:latest
+# build & "package" necessary files for debugging
+build-init: build-rapid build-delve/dlv
+	cp ../bin/aws-lambda-rie-* ./init/var/rapid/init
+	cp ./build-delve/dlv ./init/var/rapid/dlv
 
+.PHONY: build-init build-rapid

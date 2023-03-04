@@ -1,8 +1,9 @@
+# Testing lambda-runtime-init
 
-## Debugging
+## Testing in isolation
+Useful if you want more control over the API between the init and LocalStack (e.g. for error responses)
 
-Debugging with delve can be enabled by setting the entrypoint to the delve binary instead:
 
-```bash
-/dlv --listen=:"${LOCALSTACK_RIE_DEBUG_PORT}" --headless=true --api-version=2 --accept-multiclient exec /usr/local/bin/aws-lambda-rie "${RUNTIME_ENTRYPOINT}"
-```
+## Debugging with LocalStack
+
+TODO

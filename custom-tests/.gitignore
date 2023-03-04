@@ -1,1 +1,4 @@
 aws-lambda-rie
+build-delve/dlv
+init/var/rapid/init
+init/var/rapid/dlv
