@@ -60,6 +60,15 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
 
+	// Switch to sbx user and drop root privileges
+	if IsRootUser() {
+		UserLogger().Debugln("Drop privileges and switch user.")
+		user := "sbx_user1051"
+		AddUser(user)
+		DropPrivileges(user)
+		UserLogger().Debugln("Process running as sbx user.")
+	}
+
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives")
