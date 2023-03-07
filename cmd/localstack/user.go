@@ -15,10 +15,10 @@ import (
 // The actual default values are based on inspecting the AWS Lambda runtime in us-east-1
 // /etc/group is empty and /etc/gshadow is not accessible in AWS
 // The home directory does not exist in AWS Lambda
-func AddUser(user string) {
+func AddUser(user string, uid int, gid int) {
 	// passwd file format: https://www.cyberciti.biz/faq/understanding-etcpasswd-file-format/
 	passwdFile := "/etc/passwd"
-	passwdEntry := fmt.Sprintf("%[1]s:x:993:990::/home/%[1]s:/sbin/nologin", user)
+	passwdEntry := fmt.Sprintf("%[1]s:x:%[2]v:%[3]v::/home/%[1]s:/sbin/nologin", user, uid, gid)
 	if !doesFileContainEntry(passwdFile, passwdEntry) {
 		addEntry(passwdFile, passwdEntry)
 	}

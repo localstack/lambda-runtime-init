@@ -19,6 +19,7 @@ type LsOpts struct {
 	RuntimeEndpoint   string
 	RuntimeId         string
 	InitTracingPort   string
+	User              string
 	CodeArchives      string
 	HotReloadingPaths []string
 	EnableDnsServer   string
@@ -40,6 +41,7 @@ func InitLsOpts() *LsOpts {
 		// optional with default
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
+		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
 		// optional or empty
 		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -60,13 +62,14 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
 
-	// Switch to sbx user and drop root privileges
-	if IsRootUser() {
-		UserLogger().Debugln("Drop privileges and switch user.")
-		user := "sbx_user1051"
-		AddUser(user)
-		DropPrivileges(user)
-		UserLogger().Debugln("Process running as sbx user.")
+	// Switch to non-root user and drop root privileges
+	if IsRootUser() && lsOpts.User != "" {
+		uid := 993
+		gid := 990
+		AddUser(lsOpts.User, uid, gid)
+		UserLogger().Debugln("Process running as root user.")
+		DropPrivileges(lsOpts.User)
+		UserLogger().Debugln("Process running as non-root user.")
 	}
 
 	// download code archive if env variable is set
