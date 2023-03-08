@@ -62,6 +62,14 @@ func main() {
 	log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
 
+	// download code archive if env variable is set
+	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
+		log.Fatal("Failed to download code archives")
+	}
+	// enable dns server
+	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
+	go RunDNSRewriter(lsOpts, dnsServerContext)
+
 	// Switch to non-root user and drop root privileges
 	if IsRootUser() && lsOpts.User != "" {
 		uid := 993
@@ -75,13 +83,6 @@ func main() {
 		UserLogger().Debugln("Process running as non-root user.")
 	}
 
-	// download code archive if env variable is set
-	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
-		log.Fatal("Failed to download code archives")
-	}
-	// enable dns server
-	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
-	go RunDNSRewriter(lsOpts, dnsServerContext)
 	// parse CLI args
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)
