@@ -5,7 +5,6 @@
 # RELEASE_BUILD_LINKER_FLAGS disables DWARF and symbol table generation to reduce binary size
 #RELEASE_BUILD_LINKER_FLAGS=-s -w
 
-
 BINARY_NAME=aws-lambda-rie
 ARCH=x86_64
 GO_ARCH_x86_64 := amd64
@@ -25,7 +24,7 @@ compile-with-docker:
 	docker run --rm --env GOPROXY=direct -v $(shell pwd):/LambdaRuntimeLocal -w /LambdaRuntimeLocal golang:1.18 make ARCH=${ARCH} compile-lambda-linux
 
 compile-lambda-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=${GO_ARCH_${ARCH}} go build -ldflags "${RELEASE_BUILD_LINKER_FLAGS}" -gcflags="all=-N -l" -o ${DESTINATION_${ARCH}} ./cmd/localstack
+	CGO_ENABLED=0 GOOS=linux GOARCH=${GO_ARCH_${ARCH}} go build -ldflags "${RELEASE_BUILD_LINKER_FLAGS}" -gcflags="${GC_FLAGS}" -o ${DESTINATION_${ARCH}} ./cmd/localstack
 
 tests:
 	go test ./...
