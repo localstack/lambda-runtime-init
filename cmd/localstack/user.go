@@ -34,7 +34,8 @@ func AddUser(user string, uid int, gid int) {
 func doesFileContainEntry(file string, entry string) bool {
 	data, err := os.ReadFile(file)
 	if err != nil {
-		log.Errorln("Error reading file:", file, err)
+		log.Warnln("Could not read file:", file, err)
+		return false
 	}
 	text := string(data)
 	return strings.Contains(text, entry)
@@ -71,7 +72,7 @@ func UserLogger() *log.Entry {
 	uidString := strconv.Itoa(uid)
 	user, err := user.LookupId(uidString)
 	if err != nil {
-		log.Errorln("Error looking up user for uid:", uid, err)
+		log.Warnln("Could not look up user by uid:", uid, err)
 	}
 	return log.WithFields(log.Fields{
 		"username": user.Username,

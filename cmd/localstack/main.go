@@ -101,7 +101,7 @@ func main() {
 		gid := 990
 		AddUser(lsOpts.User, uid, gid)
 		if err := os.Chown("/tmp", uid, gid); err != nil {
-			log.Errorln("Error changing owner of /tmp:", err)
+			log.Warnln("Could not change owner of /tmp:", err)
 		}
 		UserLogger().Debugln("Process running as root user.")
 		DropPrivileges(lsOpts.User)
