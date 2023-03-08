@@ -50,11 +50,36 @@ func InitLsOpts() *LsOpts {
 	}
 }
 
+// UnsetLsEnvs unsets environment variables specific to LocalStack to achieve better runtime parity with AWS
+func UnsetLsEnvs() {
+	unsetList := [...]string{
+		// LocalStack internal
+		"LOCALSTACK_RUNTIME_ENDPOINT",
+		"LOCALSTACK_RUNTIME_ID",
+		"LOCALSTACK_INTEROP_PORT",
+		"LOCALSTACK_RUNTIME_TRACING_PORT",
+		"LOCALSTACK_USER",
+		"LOCALSTACK_CODE_ARCHIVES",
+		"LOCALSTACK_HOT_RELOADING_PATHS",
+		"LOCALSTACK_ENABLE_DNS_SERVER",
+		// Docker container ID
+		"HOSTNAME",
+		// User
+		"HOME",
+	}
+	for _, envKey := range unsetList {
+		if err := os.Unsetenv(envKey); err != nil {
+			log.Warnln("Could not unset environment variable:", envKey, err)
+		}
+	}
+}
+
 func main() {
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
 
 	lsOpts := InitLsOpts()
+	UnsetLsEnvs()
 
 	// set up logging (logrus)
 	//log.SetFormatter(&log.JSONFormatter{})
