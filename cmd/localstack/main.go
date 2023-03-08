@@ -19,6 +19,7 @@ type LsOpts struct {
 	RuntimeEndpoint   string
 	RuntimeId         string
 	InitTracingPort   string
+	User              string
 	CodeArchives      string
 	HotReloadingPaths []string
 	EnableDnsServer   string
@@ -40,6 +41,7 @@ func InitLsOpts() *LsOpts {
 		// optional with default
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
+		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
 		// optional or empty
 		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -48,11 +50,36 @@ func InitLsOpts() *LsOpts {
 	}
 }
 
+// UnsetLsEnvs unsets environment variables specific to LocalStack to achieve better runtime parity with AWS
+func UnsetLsEnvs() {
+	unsetList := [...]string{
+		// LocalStack internal
+		"LOCALSTACK_RUNTIME_ENDPOINT",
+		"LOCALSTACK_RUNTIME_ID",
+		"LOCALSTACK_INTEROP_PORT",
+		"LOCALSTACK_RUNTIME_TRACING_PORT",
+		"LOCALSTACK_USER",
+		"LOCALSTACK_CODE_ARCHIVES",
+		"LOCALSTACK_HOT_RELOADING_PATHS",
+		"LOCALSTACK_ENABLE_DNS_SERVER",
+		// Docker container ID
+		"HOSTNAME",
+		// User
+		"HOME",
+	}
+	for _, envKey := range unsetList {
+		if err := os.Unsetenv(envKey); err != nil {
+			log.Warnln("Could not unset environment variable:", envKey, err)
+		}
+	}
+}
+
 func main() {
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
 
 	lsOpts := InitLsOpts()
+	UnsetLsEnvs()
 
 	// set up logging (logrus)
 	//log.SetFormatter(&log.JSONFormatter{})
@@ -67,6 +94,20 @@ func main() {
 	// enable dns server
 	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
 	go RunDNSRewriter(lsOpts, dnsServerContext)
+
+	// Switch to non-root user and drop root privileges
+	if IsRootUser() && lsOpts.User != "" {
+		uid := 993
+		gid := 990
+		AddUser(lsOpts.User, uid, gid)
+		if err := os.Chown("/tmp", uid, gid); err != nil {
+			log.Warnln("Could not change owner of /tmp:", err)
+		}
+		UserLogger().Debugln("Process running as root user.")
+		DropPrivileges(lsOpts.User)
+		UserLogger().Debugln("Process running as non-root user.")
+	}
+
 	// parse CLI args
 	opts, args := getCLIArgs()
 	bootstrap, handler := getBootstrap(args, opts)

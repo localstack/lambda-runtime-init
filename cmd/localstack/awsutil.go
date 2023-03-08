@@ -121,10 +121,10 @@ type Sandbox interface {
 	Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error
 }
 
+// GetenvWithDefault returns the value of the environment variable key or the defaultValue if key is not set
 func GetenvWithDefault(key string, defaultValue string) string {
-	envValue := os.Getenv(key)
-
-	if envValue == "" {
+	envValue, ok := os.LookupEnv(key)
+	if !ok {
 		return defaultValue
 	}
 
