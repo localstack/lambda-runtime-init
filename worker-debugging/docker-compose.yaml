@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+
+  localstack-worker-python:
+    image: localstack/lambda-worker:python3.9
+    environment:
+      LOCALSTACK_HOSTNAME: "localhost"
+      EDGE_PORT: 4566
+#      COMPATIBLE_RUNTIMES: "python3.9;python3.8;python3.7"
+#      COMPATIBLE_ARCHITECTURES: "arm64"
+
+  localstack:
+    container_name: "${LOCALSTACK_DOCKER_NAME-localstack_main}"
+    image: localstack/localstack
+    ports:
+      - "127.0.0.1:4566:4566"            # LocalStack Gateway
+      - "127.0.0.1:4510-4559:4510-4559"  # external services port range
+    environment:
+      - DEBUG=${DEBUG-}
+      - LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR-}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
