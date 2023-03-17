@@ -25,6 +25,7 @@ type LsOpts struct {
 	EnableDnsServer   string
 	LocalstackIP      string
 	InitLogLevel      string
+	EdgePort          string
 }
 
 func GetEnvOrDie(env string) string {
@@ -45,6 +46,7 @@ func InitLsOpts() *LsOpts {
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
 		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "debug"),
+		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
 		// optional or empty
 		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -65,6 +67,7 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_CODE_ARCHIVES",
 		"LOCALSTACK_HOT_RELOADING_PATHS",
 		"LOCALSTACK_ENABLE_DNS_SERVER",
+		"LOCALSTACK_INIT_LOG_LEVEL",
 		// Docker container ID
 		"HOSTNAME",
 		// User
@@ -142,19 +145,13 @@ func main() {
 		SetTailLogOutput(logCollector)
 
 	// xray daemon
-	if shouldRunXrayDaemon() {
-		xrayConfig := initConfig(
-			"http://"+lsOpts.LocalstackIP+":4566",
-			GetEnvOrDie("LOCALSTACK_LAMBDA_FUNCTION_ARN"),
-		)
-		d := initDaemon(xrayConfig)
-		sandbox.AddShutdownFunc(func() {
-			d.stop()
-		})
-		runDaemon(d) // async
-
-		defer d.close() // synchronous wait for all receivers to be finished
-	}
+	xrayConfig := initConfig("http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort)
+	d := initDaemon(xrayConfig)
+	sandbox.AddShutdownFunc(func() {
+		d.stop()
+	})
+	runDaemon(d)    // async
+	defer d.close() // synchronous wait for all receivers to be finished
 
 	defaultInterop := sandbox.InteropServer()
 	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
@@ -183,14 +180,4 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to start debug server")
 	}
-}
-
-func shouldRunXrayDaemon() bool {
-	xrayAddress := os.Getenv("AWS_XRAY_DAEMON_ADDRESS")
-	traceHeaer := os.Getenv("_X_AMZN_TRACE_ID")
-	if xrayAddress != "" && traceHeaer != "" {
-		// no point in running the daemon if we don't actually sample the request
-		return strings.Contains(traceHeaer, "Sampled=1")
-	}
-	return false
 }

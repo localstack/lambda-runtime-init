@@ -49,6 +49,7 @@ type InvokeRequest struct {
 	InvokeId           string `json:"invoke-id"`
 	InvokedFunctionArn string `json:"invoked-function-arn"`
 	Payload            string `json:"payload"`
+	TraceId            string `json:"trace-id"`
 }
 
 // The ErrorResponse is sent TO LocalStack when encountering an error
@@ -98,8 +99,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					NeedDebugLogs:      true,
 					CorrelationID:      "invokeCorrelationID",
 
-					// TODO: unclear how this would behave for non-managed runtimes
-					TraceID: GetEnvOrDie("_X_AMZN_TRACE_ID"), // r.Header.Get("X-Amzn-Trace-Id"),
+					TraceID: invokeR.TraceId,
 					// TODO: set correct segment ID from request
 					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
 					//CognitoIdentityID:     "",

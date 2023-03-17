@@ -70,14 +70,13 @@ type Daemon struct {
 	server *proxy.Server
 }
 
-func initConfig(endpoint, resourceArn string) *cfg.Config {
+func initConfig(endpoint string) *cfg.Config {
 	xrayConfig := cfg.DefaultConfig()
 	xrayConfig.Socket.UDPAddress = "0.0.0.0:2000"
 	xrayConfig.Socket.TCPAddress = "0.0.0.0:2000"
 	xrayConfig.Endpoint = endpoint
 	xrayConfig.NoVerifySSL = util.Bool(true) // obvious
 	xrayConfig.LocalMode = util.Bool(true)   // skip EC2 metadata check
-	xrayConfig.ResourceARN = resourceArn
 	xrayConfig.Region = GetEnvOrDie("AWS_REGION")
 	xrayConfig.Logging.LogLevel = "dev" // TODO
 	//xrayConfig.TotalBufferSizeMB
@@ -110,7 +109,7 @@ func initDaemon(config *cfg.Config) *Daemon {
 	log.Infof("Initializing AWS X-Ray daemon %v", cfg.Version)
 
 	parameterConfig := cfg.ParameterConfigValue
-	parameterConfig.Processor.BatchSize = 2
+	parameterConfig.Processor.BatchSize = 2 // TODO
 	parameterConfig.Processor.IdleTimeoutMillisecond = 30_000
 	receiveBufferSize := parameterConfig.Socket.BufferSizeKB * 1024
 
@@ -146,7 +145,7 @@ func initDaemon(config *cfg.Config) *Daemon {
 		log.Errorf("Unable to start http proxy server: %v", err)
 		os.Exit(1)
 	}
-	processorCount := 2
+	processorCount := 2 // TODO
 
 	daemon := &Daemon{
 		receiverCount:     parameterConfig.ReceiverRoutines,
