@@ -24,6 +24,7 @@ type LsOpts struct {
 	HotReloadingPaths []string
 	EnableDnsServer   string
 	LocalstackIP      string
+	InitLogLevel      string
 }
 
 func GetEnvOrDie(env string) string {
@@ -36,12 +37,14 @@ func GetEnvOrDie(env string) string {
 
 func InitLsOpts() *LsOpts {
 	return &LsOpts{
+		// required
 		RuntimeEndpoint: GetEnvOrDie("LOCALSTACK_RUNTIME_ENDPOINT"),
 		RuntimeId:       GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
 		// optional with default
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
+		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "debug"),
 		// optional or empty
 		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -78,22 +81,33 @@ func main() {
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
 
+	// configuration parsing
 	lsOpts := InitLsOpts()
 	UnsetLsEnvs()
 
-	// set up logging (logrus)
-	//log.SetFormatter(&log.JSONFormatter{})
-	//log.SetLevel(log.TraceLevel)
-	log.SetLevel(log.DebugLevel)
+	// set up logging
 	log.SetReportCaller(true)
+	switch lsOpts.InitLogLevel {
+	case "debug":
+		log.SetLevel(log.DebugLevel)
+	case "trace":
+		log.SetFormatter(&log.JSONFormatter{})
+		log.SetLevel(log.TraceLevel)
+	default:
+		log.Fatal("Invalid value for LOCALSTACK_INIT_LOG_LEVEL")
+	}
+
+	// enable dns server
+	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
+	go RunDNSRewriter(lsOpts, dnsServerContext)
 
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives")
 	}
-	// enable dns server
-	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
-	go RunDNSRewriter(lsOpts, dnsServerContext)
+
+	// parse CLI args
+	bootstrap, handler := getBootstrap(os.Args)
 
 	// Switch to non-root user and drop root privileges
 	if IsRootUser() && lsOpts.User != "" {
@@ -108,22 +122,39 @@ func main() {
 		UserLogger().Debugln("Process running as non-root user.")
 	}
 
-	// parse CLI args
-	opts, args := getCLIArgs()
-	bootstrap, handler := getBootstrap(args, opts)
 	logCollector := NewLogCollector()
+
+	// file watcher for hot-reloading
 	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
+
+	// build sandbox
 	sandbox := rapidcore.
 		NewSandboxBuilder(bootstrap).
+		//SetTracer(tracer).
 		AddShutdownFunc(func() {
-			log.Debugln("Closing contexts")
+			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
+			log.Debugln("Stopping DNS server")
 			stopDnsServer()
 		}).
-		AddShutdownFunc(func() { os.Exit(0) }).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetTailLogOutput(logCollector)
+
+	// xray daemon
+	if shouldRunXrayDaemon() {
+		xrayConfig := initConfig(
+			"http://"+lsOpts.LocalstackIP+":4566",
+			GetEnvOrDie("LOCALSTACK_LAMBDA_FUNCTION_ARN"),
+		)
+		d := initDaemon(xrayConfig)
+		sandbox.AddShutdownFunc(func() {
+			d.stop()
+		})
+		runDaemon(d) // async
+
+		defer d.close() // synchronous wait for all receivers to be finished
+	}
 
 	defaultInterop := sandbox.InteropServer()
 	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
@@ -136,7 +167,7 @@ func main() {
 	go sandbox.Create()
 
 	// get timeout
-	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT")
+	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT") // TODO: collect all AWS_* env parsing
 	invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
 	if err != nil {
 		log.Fatalln(err)
@@ -152,4 +183,14 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to start debug server")
 	}
+}
+
+func shouldRunXrayDaemon() bool {
+	xrayAddress := os.Getenv("AWS_XRAY_DAEMON_ADDRESS")
+	traceHeaer := os.Getenv("_X_AMZN_TRACE_ID")
+	if xrayAddress != "" && traceHeaer != "" {
+		// no point in running the daemon if we don't actually sample the request
+		return strings.Contains(traceHeaer, "Sampled=1")
+	}
+	return false
 }

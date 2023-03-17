@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
@@ -27,29 +26,12 @@ const (
 	runtimeBootstrap = "/var/runtime/bootstrap"
 )
 
-type options struct {
-	LogLevel           string `long:"log-level" default:"info" description:"log level"`
-	InitCachingEnabled bool   `long:"enable-init-caching" description:"Enable support for Init Caching"`
-}
-
-func getCLIArgs() (options, []string) {
-	var opts options
-	parser := flags.NewParser(&opts, flags.IgnoreUnknown)
-	args, err := parser.ParseArgs(os.Args)
-
-	if err != nil {
-		log.WithError(err).Fatal("Failed to parse command line arguments:", os.Args)
-	}
-
-	return opts, args
-}
-
 func isBootstrapFileExist(filePath string) bool {
 	file, err := os.Stat(filePath)
 	return !os.IsNotExist(err) && !file.IsDir()
 }
 
-func getBootstrap(args []string, opts options) (*rapidcore.Bootstrap, string) {
+func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
 	var bootstrapLookupCmd []string
 	var handler string
 	currentWorkingDir := "/var/task" // default value
@@ -148,7 +130,7 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
 	if opts.EnableDnsServer != "1" {
-		log.Debugln("Dns server disabled")
+		log.Debugln("DNS server disabled. S")
 		return
 	}
 	dnsForwarder, err := NewDnsForwarder(opts.LocalstackIP)
@@ -160,7 +142,7 @@ func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
 	dnsForwarder.Start()
 
 	<-ctx.Done()
-	log.Debugln("Shutting down dns server")
+	log.Debugln("DNS server stopped")
 }
 
 func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context) {
@@ -234,11 +216,11 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.T
 	// pass to rapid
 	sandbox.Init(&interop.Init{
 		Handler:           GetenvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
-		CorrelationID:     "initCorrelationID",
+		CorrelationID:     "initCorrelationID", // TODO
 		AwsKey:            os.Getenv("AWS_ACCESS_KEY_ID"),
 		AwsSecret:         os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		AwsSession:        os.Getenv("AWS_SESSION_TOKEN"),
-		XRayDaemonAddress: "0.0.0.0:0", // TODO
+		XRayDaemonAddress: GetenvWithDefault("AWS_XRAY_DAEMON_ADDRESS", "127.0.0.1:2000"),
 		FunctionName:      GetenvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
 		FunctionVersion:   functionVersion,
 
