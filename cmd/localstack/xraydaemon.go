@@ -109,8 +109,8 @@ func initDaemon(config *cfg.Config) *Daemon {
 	log.Infof("Initializing AWS X-Ray daemon %v", cfg.Version)
 
 	parameterConfig := cfg.ParameterConfigValue
-	parameterConfig.Processor.BatchSize = 4
-	parameterConfig.Processor.IdleTimeoutMillisecond = 30_000
+	parameterConfig.Processor.BatchSize = 10
+	parameterConfig.Processor.IdleTimeoutMillisecond = 1000
 	receiveBufferSize := parameterConfig.Socket.BufferSizeKB * 1024
 
 	var sock socketconn.SocketConn

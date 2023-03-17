@@ -148,10 +148,12 @@ func main() {
 	xrayConfig := initConfig("http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort)
 	d := initDaemon(xrayConfig)
 	sandbox.AddShutdownFunc(func() {
+		log.Debugln("Shutting down xray daemon")
 		d.stop()
+		log.Debugln("Flushing segments in xray daemon")
+		d.close()
 	})
-	runDaemon(d)    // async
-	defer d.close() // synchronous wait for all receivers to be finished
+	runDaemon(d) // async
 
 	defaultInterop := sandbox.InteropServer()
 	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
