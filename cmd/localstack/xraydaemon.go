@@ -85,7 +85,7 @@ func initConfig(endpoint string) *cfg.Config {
 	return xrayConfig
 }
 
-func initDaemon(config *cfg.Config) *Daemon {
+func initDaemon(config *cfg.Config, enableTelemetry bool) *Daemon {
 	if logFile != "" {
 		var fileWriter io.Writer
 		if *config.Logging.LogRotation {
@@ -133,8 +133,9 @@ func initDaemon(config *cfg.Config) *Daemon {
 	awsConfig, session := conn.GetAWSConfigSession(&conn.Conn{}, config, config.RoleARN, config.Region, noMetadata)
 	log.Infof("Using region: %v", aws.StringValue(awsConfig.Region))
 
-	log.Debugf("ARN of the AWS resource running the daemon: %v", config.ResourceARN)
-	telemetry.Init(awsConfig, session, config.ResourceARN, noMetadata)
+	if enableTelemetry {
+		telemetry.Init(awsConfig, session, config.ResourceARN, noMetadata)
+	}
 
 	// If calculated number of buffer is lower than our default, use calculated one. Otherwise, use default value.
 	parameterConfig.Processor.BatchSize = util.GetMinIntValue(parameterConfig.Processor.BatchSize, buffers)
@@ -179,10 +180,14 @@ func (d *Daemon) close() {
 	// Signal routines to finish
 	// This will push telemetry and customer segments in parallel
 	d.std.Close()
-	telemetry.T.Quit <- true
+	if telemetry.T != nil {
+		telemetry.T.Quit <- true
+	}
 
 	<-d.processor.Done
-	<-telemetry.T.Done
+	if telemetry.T != nil {
+		<-telemetry.T.Done
+	}
 
 	log.Debugf("Trace segment: received: %d, truncated: %d, processed: %d", atomic.LoadUint64(&d.count), d.std.TruncatedCount(), d.processor.ProcessedCount())
 	log.Debugf("Shutdown finished. Current epoch in nanoseconds: %v", time.Now().UnixNano())
@@ -226,7 +231,7 @@ func (d *Daemon) poll() {
 			fallbackPointerUsed = true
 		}
 		rlen := d.read(bufPointer)
-		if rlen > 0 {
+		if rlen > 0 && telemetry.T != nil {
 			telemetry.T.SegmentReceived(1)
 		}
 		if rlen == 0 {
@@ -235,7 +240,7 @@ func (d *Daemon) poll() {
 			}
 			continue
 		}
-		if fallbackPointerUsed {
+		if fallbackPointerUsed && telemetry.T != nil {
 			log.Warn("Segment dropped. Consider increasing memory limit")
 			telemetry.T.SegmentSpillover(1)
 			continue
@@ -250,7 +255,9 @@ func (d *Daemon) poll() {
 		if len(slices[1]) == 0 {
 			log.Warnf("Missing header or segment: %s", string(slices[0]))
 			d.pool.Return(bufPointer)
-			telemetry.T.SegmentRejected(1)
+			if telemetry.T != nil {
+				telemetry.T.SegmentRejected(1)
+			}
 			continue
 		}
 
@@ -264,7 +271,9 @@ func (d *Daemon) poll() {
 		default:
 			log.Warnf("Invalid header: %s", string(header))
 			d.pool.Return(bufPointer)
-			telemetry.T.SegmentRejected(1)
+			if telemetry.T != nil {
+				telemetry.T.SegmentRejected(1)
+			}
 			continue
 		}
 
