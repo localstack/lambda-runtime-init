@@ -240,9 +240,11 @@ func (d *Daemon) poll() {
 			}
 			continue
 		}
-		if fallbackPointerUsed && telemetry.T != nil {
+		if fallbackPointerUsed {
 			log.Warn("Segment dropped. Consider increasing memory limit")
-			telemetry.T.SegmentSpillover(1)
+			if telemetry.T != nil {
+				telemetry.T.SegmentSpillover(1)
+			}
 			continue
 		} else if rlen == -1 {
 			return
