@@ -44,12 +44,15 @@ func (l *LocalStackAdapter) SendStatus(status LocalStackStatus) error {
 	return nil
 }
 
+// The InvokeRequest is sent by LocalStack to trigger an invocation
 type InvokeRequest struct {
 	InvokeId           string `json:"invoke-id"`
 	InvokedFunctionArn string `json:"invoked-function-arn"`
 	Payload            string `json:"payload"`
+	TraceId            string `json:"trace-id"`
 }
 
+// The ErrorResponse is sent TO LocalStack when encountering an error
 type ErrorResponse struct {
 	ErrorMessage string   `json:"errorMessage"`
 	ErrorType    string   `json:"errorType,omitempty"`
@@ -95,10 +98,8 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
 					NeedDebugLogs:      true,
 					CorrelationID:      "invokeCorrelationID",
-					// TODO: should we use the env _X_AMZN_TRACE_ID here or get the value from the request headers from the direct invoke?
-					//		for now we just set a "real" static value
-					TraceID: "Root=1-53cfd31b-192638fa13e39d2c2bcea001;Parent=365fb4b15f2e3987;Sampled=0", // r.Header.Get("X-Amzn-Trace-Id"),
-					//TraceID: GetEnvOrDie("_X_AMZN_TRACE_ID"), // r.Header.Get("X-Amzn-Trace-Id"),
+
+					TraceID: invokeR.TraceId,
 					// TODO: set correct segment ID from request
 					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
 					//CognitoIdentityID:     "",
