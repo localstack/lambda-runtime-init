@@ -15,17 +15,18 @@ import (
 )
 
 type LsOpts struct {
-	InteropPort       string
-	RuntimeEndpoint   string
-	RuntimeId         string
-	InitTracingPort   string
-	User              string
-	CodeArchives      string
-	HotReloadingPaths []string
-	EnableDnsServer   string
-	LocalstackIP      string
-	InitLogLevel      string
-	EdgePort          string
+	InteropPort         string
+	RuntimeEndpoint     string
+	RuntimeId           string
+	InitTracingPort     string
+	User                string
+	CodeArchives        string
+	HotReloadingPaths   []string
+	EnableDnsServer     string
+	LocalstackIP        string
+	InitLogLevel        string
+	EdgePort            string
+	EnableXRayTelemetry string
 }
 
 func GetEnvOrDie(env string) string {
@@ -48,10 +49,11 @@ func InitLsOpts() *LsOpts {
 		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "debug"),
 		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
 		// optional or empty
-		CodeArchives:      os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
-		HotReloadingPaths: strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
-		EnableDnsServer:   os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
-		LocalstackIP:      os.Getenv("LOCALSTACK_HOSTNAME"),
+		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
+		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
+		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
+		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
+		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 	}
 }
 
@@ -67,6 +69,7 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_CODE_ARCHIVES",
 		"LOCALSTACK_HOT_RELOADING_PATHS",
 		"LOCALSTACK_ENABLE_DNS_SERVER",
+		"LOCALSTACK_ENABLE_XRAY_TELEMETRY",
 		"LOCALSTACK_INIT_LOG_LEVEL",
 		// Docker container ID
 		"HOSTNAME",
@@ -146,7 +149,7 @@ func main() {
 
 	// xray daemon
 	xrayConfig := initConfig("http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort)
-	d := initDaemon(xrayConfig)
+	d := initDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
 	sandbox.AddShutdownFunc(func() {
 		log.Debugln("Shutting down xray daemon")
 		d.stop()
