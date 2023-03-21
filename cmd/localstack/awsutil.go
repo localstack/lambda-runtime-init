@@ -130,7 +130,7 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
 	if opts.EnableDnsServer != "1" {
-		log.Debugln("DNS server disabled. S")
+		log.Debugln("DNS server disabled.")
 		return
 	}
 	dnsForwarder, err := NewDnsForwarder(opts.LocalstackIP)

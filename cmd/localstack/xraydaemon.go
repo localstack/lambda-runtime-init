@@ -78,7 +78,7 @@ func initConfig(endpoint string) *cfg.Config {
 	xrayConfig.NoVerifySSL = util.Bool(true) // obvious
 	xrayConfig.LocalMode = util.Bool(true)   // skip EC2 metadata check
 	xrayConfig.Region = GetEnvOrDie("AWS_REGION")
-	xrayConfig.Logging.LogLevel = "dev" // TODO
+	xrayConfig.Logging.LogLevel = "info"
 	//xrayConfig.TotalBufferSizeMB
 	//xrayConfig.RoleARN = roleARN
 
