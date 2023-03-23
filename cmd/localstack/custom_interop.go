@@ -142,7 +142,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 				}
 				// optional sleep. can be used for debugging purposes
 				if lsOpts.PostInvokeWaitMS != "" {
-					waitS, err := strconv.Atoi(lsOpts.PostInvokeWaitS)
+					waitMS, err := strconv.Atoi(lsOpts.PostInvokeWaitMS)
 					if err != nil {
 						log.Fatalln(err)
 					}
