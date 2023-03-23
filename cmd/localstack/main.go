@@ -109,7 +109,7 @@ func main() {
 
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
-		log.Fatal("Failed to download code archives")
+		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
 	// parse CLI args
