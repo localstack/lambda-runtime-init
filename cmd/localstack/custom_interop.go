@@ -146,7 +146,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					if err != nil {
 						log.Fatalln(err)
 					}
-					time.Sleep(time.Duration(waitS) * time.Second)
+					time.Sleep(time.Duration(waitMS) * time.Millisecond)
 				}
 				timeoutDuration := time.Duration(timeout) * time.Second
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
