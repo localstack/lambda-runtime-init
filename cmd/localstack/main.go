@@ -27,6 +27,7 @@ type LsOpts struct {
 	InitLogLevel        string
 	EdgePort            string
 	EnableXRayTelemetry string
+	PostInvokeWaitMS     string
 }
 
 func GetEnvOrDie(env string) string {
@@ -54,6 +55,7 @@ func InitLsOpts() *LsOpts {
 		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
+		PostInvokeWaitMS:     os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
 	}
 }
 
@@ -71,6 +73,8 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_ENABLE_DNS_SERVER",
 		"LOCALSTACK_ENABLE_XRAY_TELEMETRY",
 		"LOCALSTACK_INIT_LOG_LEVEL",
+		"LOCALSTACK_POST_INVOKE_WAIT_MS",
+
 		// Docker container ID
 		"HOSTNAME",
 		// User
