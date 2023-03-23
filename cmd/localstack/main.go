@@ -55,7 +55,7 @@ func InitLsOpts() *LsOpts {
 		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
-		PostInvokeWaitS:     os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_S"),
+		PostInvokeWaitMS:     os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
 	}
 }
 
