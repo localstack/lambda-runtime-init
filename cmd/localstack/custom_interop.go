@@ -12,6 +12,7 @@ import (
 	"go.amzn.com/lambda/rapidcore/standalone"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -138,6 +139,14 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					default:
 						log.Fatalln(err)
 					}
+				}
+				// optional sleep. can be used for debugging purposes
+				if lsOpts.PostInvokeWaitS != "" {
+					waitS, err := strconv.Atoi(lsOpts.PostInvokeWaitS)
+					if err != nil {
+						log.Fatalln(err)
+					}
+					time.Sleep(time.Duration(waitS) * time.Second)
 				}
 				timeoutDuration := time.Duration(timeout) * time.Second
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
