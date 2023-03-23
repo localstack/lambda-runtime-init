@@ -27,7 +27,7 @@ type LsOpts struct {
 	InitLogLevel        string
 	EdgePort            string
 	EnableXRayTelemetry string
-	PostInvokeWaitS     string
+	PostInvokeWaitMS     string
 }
 
 func GetEnvOrDie(env string) string {
