@@ -6,7 +6,6 @@ import (
 	"context"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore"
-	_ "net/http/pprof"
 	"os"
 	"runtime/debug"
 	"strconv"
