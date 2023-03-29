@@ -36,9 +36,9 @@ const (
 	Error LocalStackStatus = "error"
 )
 
-func (l *LocalStackAdapter) SendStatus(status LocalStackStatus) error {
+func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
 	status_url := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(status_url, "text", bytes.NewReader([]byte{}))
+	_, err := http.Post(status_url, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 
 func (c *CustomInteropServer) StartAcceptingDirectInvokes() error {
 	log.Traceln("Function called")
-	err := c.localStackAdapter.SendStatus(Ready)
+	err := c.localStackAdapter.SendStatus(Ready, []byte{})
 	if err != nil {
 		return err
 	}
@@ -209,6 +209,10 @@ func (c *CustomInteropServer) SendResponse(invokeID string, contentType string, 
 
 func (c *CustomInteropServer) SendErrorResponse(invokeID string, response *interop.ErrorResponse) error {
 	log.Traceln("Function called")
+	err := c.localStackAdapter.SendStatus(Error, response.Payload)
+	if err != nil {
+		return err
+	}
 	return c.delegate.SendErrorResponse(invokeID, response)
 }
 
