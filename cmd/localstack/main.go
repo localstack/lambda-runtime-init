@@ -6,7 +6,6 @@ import (
 	"context"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore"
-	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"runtime/debug"
@@ -27,7 +26,7 @@ type LsOpts struct {
 	InitLogLevel        string
 	EdgePort            string
 	EnableXRayTelemetry string
-	PostInvokeWaitMS     string
+	PostInvokeWaitMS    string
 }
 
 func GetEnvOrDie(env string) string {
@@ -55,7 +54,7 @@ func InitLsOpts() *LsOpts {
 		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
-		PostInvokeWaitMS:     os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
+		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
 	}
 }
 
@@ -113,7 +112,7 @@ func main() {
 
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
-		log.Fatal("Failed to download code archives")
+		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
 	// parse CLI args
@@ -168,6 +167,10 @@ func main() {
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
 	}
+	exitChan := make(chan struct{})
+	sandbox.AddShutdownFunc(func() {
+		exitChan <- struct{}{}
+	})
 
 	// initialize all flows and start runtime API
 	go sandbox.Create()
@@ -183,10 +186,5 @@ func main() {
 	// start runtime init
 	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
 
-	// TODO: make the tracing server optional
-	// start blocking with the tracing server
-	err = http.ListenAndServe("0.0.0.0:"+lsOpts.InitTracingPort, http.DefaultServeMux)
-	if err != nil {
-		log.Fatal("Failed to start debug server")
-	}
+	<-exitChan
 }
