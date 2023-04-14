@@ -71,7 +71,8 @@ type Daemon struct {
 	server *proxy.Server
 }
 
-func initConfig(endpoint string) *cfg.Config {
+// https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html
+func initConfig(endpoint string, logLevel string) *cfg.Config {
 	xrayConfig := cfg.DefaultConfig()
 	xrayConfig.Socket.UDPAddress = "127.0.0.1:2000"
 	xrayConfig.Socket.TCPAddress = "127.0.0.1:2000"
@@ -79,7 +80,7 @@ func initConfig(endpoint string) *cfg.Config {
 	xrayConfig.NoVerifySSL = util.Bool(true) // obvious
 	xrayConfig.LocalMode = util.Bool(true)   // skip EC2 metadata check
 	xrayConfig.Region = GetEnvOrDie("AWS_REGION")
-	xrayConfig.Logging.LogLevel = "info"
+	xrayConfig.Logging.LogLevel = logLevel
 	//xrayConfig.TotalBufferSizeMB
 	//xrayConfig.RoleARN = roleARN
 
