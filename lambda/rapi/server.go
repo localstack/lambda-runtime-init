@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // LOCALSTACK CHANGES 2022-03-10: Chi logger middleware added
+// LOCALSTACK CHANGES 2023-04-14: Replace Chi logger with the rapid AccessLogMiddleware based on Logrus
 
 package rapi
 
 import (
 	"context"
 	"fmt"
-	"github.com/go-chi/chi/middleware"
 	"net"
 	"net/http"
 
@@ -16,6 +16,7 @@ import (
 	"go.amzn.com/lambda/appctx"
 
 	"go.amzn.com/lambda/core"
+	"go.amzn.com/lambda/rapi/middleware"
 	"go.amzn.com/lambda/rapi/rendering"
 	"go.amzn.com/lambda/telemetry"
 
@@ -52,7 +53,7 @@ func NewServer(host string, port int, appCtx appctx.ApplicationContext,
 	exitErrors := make(chan error, 1)
 
 	router := chi.NewRouter()
-	router.Use(middleware.Logger)
+	router.Use(middleware.AccessLogMiddleware())
 	router.Mount(version20180601, NewRouter(appCtx, registrationService, renderingService))
 	router.Mount(version20200101, ExtensionsRouter(appCtx, registrationService, renderingService))
 

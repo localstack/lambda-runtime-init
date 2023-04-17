@@ -45,7 +45,7 @@ func InitLsOpts() *LsOpts {
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
 		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
-		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "debug"),
+		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
 		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
 		// optional or empty
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
@@ -93,14 +93,32 @@ func main() {
 	lsOpts := InitLsOpts()
 	UnsetLsEnvs()
 
-	// set up logging
+	// set up logging following the Logrus logging levels: https://github.com/sirupsen/logrus#level-logging
 	log.SetReportCaller(true)
+	// https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html
+	xRayLogLevel := "info"
 	switch lsOpts.InitLogLevel {
-	case "debug":
-		log.SetLevel(log.DebugLevel)
 	case "trace":
 		log.SetFormatter(&log.JSONFormatter{})
 		log.SetLevel(log.TraceLevel)
+		xRayLogLevel = "debug"
+	case "debug":
+		log.SetLevel(log.DebugLevel)
+		xRayLogLevel = "debug"
+	case "info":
+		log.SetLevel(log.InfoLevel)
+	case "warn":
+		log.SetLevel(log.WarnLevel)
+		xRayLogLevel = "warn"
+	case "error":
+		log.SetLevel(log.ErrorLevel)
+		xRayLogLevel = "error"
+	case "fatal":
+		log.SetLevel(log.FatalLevel)
+		xRayLogLevel = "error"
+	case "panic":
+		log.SetLevel(log.PanicLevel)
+		xRayLogLevel = "error"
 	default:
 		log.Fatal("Invalid value for LOCALSTACK_INIT_LOG_LEVEL")
 	}
@@ -150,7 +168,8 @@ func main() {
 		SetTailLogOutput(logCollector)
 
 	// xray daemon
-	xrayConfig := initConfig("http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort)
+	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
+	xrayConfig := initConfig(endpoint, xRayLogLevel)
 	d := initDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
 	sandbox.AddShutdownFunc(func() {
 		log.Debugln("Shutting down xray daemon")
