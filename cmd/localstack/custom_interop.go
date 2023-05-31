@@ -210,6 +210,9 @@ func (c *CustomInteropServer) SendResponse(invokeID string, contentType string, 
 
 func (c *CustomInteropServer) SendErrorResponse(invokeID string, response *interop.ErrorResponse) error {
 	is, err := c.InternalState()
+	if err != nil {
+		return err
+	}
 	rs := is.Runtime.State
 	if rs.Name == core.RuntimeInitErrorStateName {
 		err = c.localStackAdapter.SendStatus(Error, response.Payload)
