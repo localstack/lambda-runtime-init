@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/core"
 	"go.amzn.com/lambda/core/statejson"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
@@ -208,11 +209,18 @@ func (c *CustomInteropServer) SendResponse(invokeID string, contentType string, 
 }
 
 func (c *CustomInteropServer) SendErrorResponse(invokeID string, response *interop.ErrorResponse) error {
-	log.Traceln("Function called")
-	err := c.localStackAdapter.SendStatus(Error, response.Payload)
+	is, err := c.InternalState()
 	if err != nil {
 		return err
 	}
+	rs := is.Runtime.State
+	if rs.Name == core.RuntimeInitErrorStateName {
+		err = c.localStackAdapter.SendStatus(Error, response.Payload)
+		if err != nil {
+			return err
+		}
+	}
+
 	return c.delegate.SendErrorResponse(invokeID, response)
 }
 
