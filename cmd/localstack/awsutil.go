@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
+	"golang.org/x/sys/unix"
 	"io"
 	"io/fs"
 	"math"
@@ -75,6 +76,15 @@ func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
 
 	} else {
 		log.Panic("insufficient arguments: bootstrap not provided")
+	}
+
+	err := unix.Access(bootstrapLookupCmd[0], unix.X_OK)
+	if err != nil {
+		log.Debug("Bootstrap not executable, setting permissions to 0755...", bootstrapLookupCmd[0])
+		err = os.Chmod(bootstrapLookupCmd[0], 0755)
+		if err != nil {
+			log.Warn("Error setting bootstrap to 0755 permissions: ", bootstrapLookupCmd[0], err)
+		}
 	}
 
 	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir), handler
