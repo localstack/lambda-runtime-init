@@ -132,6 +132,11 @@ func main() {
 		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
+	// fix permissions of layers directory (if it exists) for better AWS parity
+	if err := ChmodRecursively("/opt", 0755); err != nil {
+		log.Warnln("Could not change file mode of directory /opt:", err)
+	}
+
 	// parse CLI args
 	bootstrap, handler := getBootstrap(os.Args)
 
@@ -141,7 +146,7 @@ func main() {
 		gid := 990
 		AddUser(lsOpts.User, uid, gid)
 		if err := os.Chown("/tmp", uid, gid); err != nil {
-			log.Warnln("Could not change owner of /tmp:", err)
+			log.Warnln("Could not change owner of directory /tmp:", err)
 		}
 		UserLogger().Debugln("Process running as root user.")
 		DropPrivileges(lsOpts.User)
