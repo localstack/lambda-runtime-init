@@ -132,9 +132,13 @@ func main() {
 		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
-	// fix permissions of layers directory (if it exists) for better AWS parity
+	// fix permissions of the layers directory for better AWS parity
 	if err := ChmodRecursively("/opt", 0755); err != nil {
-		log.Warnln("Could not change file mode of directory /opt:", err)
+		log.Warnln("Could not change file mode recursively of directory /opt:", err)
+	}
+	// fix permissions of the tmp directory for better AWS parity
+	if err := ChmodRecursively("/tmp", 0700); err != nil {
+		log.Warnln("Could not change file mode recursively of directory /tmp:", err)
 	}
 
 	// parse CLI args
