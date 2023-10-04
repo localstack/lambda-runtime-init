@@ -153,8 +153,12 @@ func main() {
 			log.Warnln("Could not change owner of directory /tmp:", err)
 		}
 		UserLogger().Debugln("Process running as root user.")
-		DropPrivileges(lsOpts.User)
-		UserLogger().Debugln("Process running as non-root user.")
+		err := DropPrivileges(lsOpts.User)
+		if err != nil {
+			log.Warnln("Could not drop root privileges.", err)
+		} else {
+			UserLogger().Debugln("Process running as non-root user.")
+		}
 	}
 
 	logCollector := NewLogCollector()

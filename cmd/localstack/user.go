@@ -70,12 +70,12 @@ func UserLogger() *log.Entry {
 	}
 	uid := os.Getuid()
 	uidString := strconv.Itoa(uid)
-	user, err := user.LookupId(uidString)
+	userObject, err := user.LookupId(uidString)
 	if err != nil {
 		log.Warnln("Could not look up user by uid:", uid, err)
 	}
 	return log.WithFields(log.Fields{
-		"username": user.Username,
+		"username": userObject.Username,
 		"uid":      uid,
 		"euid":     os.Geteuid(),
 		"gid":      os.Getgid(),
