@@ -88,7 +88,7 @@ func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
 		}
 	}
 
-	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir), handler
+	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir, ""), handler
 }
 
 func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
