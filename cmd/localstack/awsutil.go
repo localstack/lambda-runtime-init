@@ -226,7 +226,6 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.T
 	// pass to rapid
 	sandbox.Init(&interop.Init{
 		Handler:           GetenvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
-		CorrelationID:     "initCorrelationID", // TODO
 		AwsKey:            os.Getenv("AWS_ACCESS_KEY_ID"),
 		AwsSecret:         os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		AwsSession:        os.Getenv("AWS_SESSION_TOKEN"),
