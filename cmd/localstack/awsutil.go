@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
+	"go.amzn.com/lambda/rapidcore/env"
 	"golang.org/x/sys/unix"
 	"io"
 	"io/fs"
@@ -233,7 +234,16 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.T
 		FunctionName:      GetenvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
 		FunctionVersion:   functionVersion,
 
+		// TODO: Implement runtime management controls
+		// https://aws.amazon.com/blogs/compute/introducing-aws-lambda-runtime-management-controls/
+		RuntimeInfo: interop.RuntimeInfo{
+			ImageJSON: "{}",
+			Arn:       "",
+			Version:   ""},
 		CustomerEnvironmentVariables: additionalFunctionEnvironmentVariables,
+		SandboxType:                  interop.SandboxClassic,
+		Bootstrap:                    bs,
+		EnvironmentVariables:         env.NewEnvironment(),
 	}, timeout*1000)
 	initEnd := time.Now()
 	return initStart, initEnd
