@@ -155,7 +155,7 @@ func main() {
 
 	// build sandbox
 	sandbox := rapidcore.
-		NewSandboxBuilder(bootstrap).
+		NewSandboxBuilder().
 		//SetTracer(tracer).
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
@@ -202,7 +202,7 @@ func main() {
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
 
 	// start runtime init
-	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
+	go InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
 
 	<-exitChan
 }

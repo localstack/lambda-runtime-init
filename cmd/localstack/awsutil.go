@@ -204,7 +204,7 @@ func getSubFoldersInList(prefix string, pathList []string) (oldFolders []string,
 	return
 }
 
-func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.Time, time.Time) {
+func InitHandler(sandbox Sandbox, functionVersion string, timeout int64, bs interop.Bootstrap) (time.Time, time.Time) {
 	additionalFunctionEnvironmentVariables := map[string]string{}
 
 	// Add default Env Vars if they were not defined. This is a required otherwise 1p Python2.7, Python3.6, and
