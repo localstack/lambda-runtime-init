@@ -1,5 +1,5 @@
 # Golang EOL overview: https://endoflife.date/go
-DOCKER_GOLANG_IMAGE ?= golang:1.18.2
+DOCKER_GOLANG_IMAGE ?= golang:1.19
 
 # On ARM hosts, use: make ARCH=arm64 build-init
 # Check host architecture: uname -m
