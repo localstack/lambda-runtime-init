@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // LOCALSTACK CHANGES 2022-03-10: modified/collected file from /cmd/aws-lambda-rie/* into this util
 // LOCALSTACK CHANGES 2022-03-10: minor refactoring of PrintEndReports
+// LOCALSTACK CHANGES 2023-10-06: reflect getBootstrap and InitHandler API updates
 
 package main
 
@@ -11,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
+	"go.amzn.com/lambda/rapidcore/env"
 	"golang.org/x/sys/unix"
 	"io"
 	"io/fs"
@@ -87,7 +89,7 @@ func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
 		}
 	}
 
-	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir), handler
+	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir, ""), handler
 }
 
 func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
@@ -203,7 +205,7 @@ func getSubFoldersInList(prefix string, pathList []string) (oldFolders []string,
 	return
 }
 
-func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.Time, time.Time) {
+func InitHandler(sandbox Sandbox, functionVersion string, timeout int64, bs interop.Bootstrap) (time.Time, time.Time) {
 	additionalFunctionEnvironmentVariables := map[string]string{}
 
 	// Add default Env Vars if they were not defined. This is a required otherwise 1p Python2.7, Python3.6, and
@@ -226,7 +228,6 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.T
 	// pass to rapid
 	sandbox.Init(&interop.Init{
 		Handler:           GetenvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
-		CorrelationID:     "initCorrelationID", // TODO
 		AwsKey:            os.Getenv("AWS_ACCESS_KEY_ID"),
 		AwsSecret:         os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		AwsSession:        os.Getenv("AWS_SESSION_TOKEN"),
@@ -234,7 +235,16 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64) (time.T
 		FunctionName:      GetenvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
 		FunctionVersion:   functionVersion,
 
+		// TODO: Implement runtime management controls
+		// https://aws.amazon.com/blogs/compute/introducing-aws-lambda-runtime-management-controls/
+		RuntimeInfo: interop.RuntimeInfo{
+			ImageJSON: "{}",
+			Arn:       "",
+			Version:   ""},
 		CustomerEnvironmentVariables: additionalFunctionEnvironmentVariables,
+		SandboxType:                  interop.SandboxClassic,
+		Bootstrap:                    bs,
+		EnvironmentVariables:         env.NewEnvironment(),
 	}, timeout*1000)
 	initEnd := time.Now()
 	return initStart, initEnd

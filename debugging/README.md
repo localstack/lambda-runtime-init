@@ -7,7 +7,7 @@ Useful if you want more control over the API between the init and LocalStack (e.
 ## Debugging with LocalStack
 
 1. Build init via `make build`
-    * On ARM hosts, use `make ARCH=arm64 build`
+    * On ARM hosts, use `make ARCH=arm64 build` because debugging only works with native containers.
 
 2. Start LocalStack with the following flags:
 
@@ -33,4 +33,4 @@ Useful if you want more control over the API between the init and LocalStack (e.
 Within `create_lambda_function`:
 
 * Increase the `timeout=3600`
-* On ARM hosts, use `Architectures=[Architecture.arm64]`
+* On ARM hosts, debugging only works with ARM containers. Use `LAMBDA_IGNORE_ARCHITECTURE=1` or explicitly configure the Lambda function with `Architectures=[Architecture.arm64]`
