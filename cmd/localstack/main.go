@@ -164,8 +164,7 @@ func main() {
 			stopDnsServer()
 		}).
 		SetExtensionsFlag(true).
-		SetInitCachingFlag(true).
-		SetTailLogOutput(logCollector)
+		SetInitCachingFlag(true)
 
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
