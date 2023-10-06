@@ -178,7 +178,7 @@ func main() {
 	})
 	runDaemon(d) // async
 
-	defaultInterop := sandbox.InteropServer()
+	defaultInterop := sandbox.DefaultInteropServer()
 	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
 	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
