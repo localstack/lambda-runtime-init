@@ -99,7 +99,6 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate rapidcore.InteropServer, lo
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
 					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
 					NeedDebugLogs:      true,
-					CorrelationID:      "invokeCorrelationID",
 
 					TraceID: invokeR.TraceId,
 					// TODO: set correct segment ID from request
