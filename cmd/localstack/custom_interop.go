@@ -1,5 +1,8 @@
 package main
 
+// Original implementation: lambda/rapidcore/server.go includes Server struct with state
+// Server interface between Runtime API and this init: lambda/interop/model.go:358
+
 import (
 	"bytes"
 	"encoding/json"
@@ -269,4 +272,14 @@ func (c *CustomInteropServer) InternalState() (*statejson.InternalStateDescripti
 func (c *CustomInteropServer) CurrentToken() *interop.Token {
 	log.Traceln("CurrentToken called")
 	return c.delegate.CurrentToken()
+}
+
+func (c *CustomInteropServer) SetSandboxContext(sbCtx interop.SandboxContext) {
+	log.Traceln("SetSandboxContext called")
+	c.delegate.SetSandboxContext(sbCtx)
+}
+
+func (c *CustomInteropServer) SetInternalStateGetter(cb interop.InternalStateGetter) {
+	log.Traceln("SetInternalStateGetter called")
+	c.delegate.InternalStateGetter = cb
 }

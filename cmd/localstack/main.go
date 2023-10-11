@@ -190,7 +190,10 @@ func main() {
 	})
 
 	// initialize all flows and start runtime API
-	go sandbox.Create()
+	sandboxContext, internalStateFn := sandbox.Create()
+	// Populate our custom interop server
+	interopServer.SetSandboxContext(sandboxContext)
+	interopServer.SetInternalStateGetter(internalStateFn)
 
 	// get timeout
 	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT") // TODO: collect all AWS_* env parsing
