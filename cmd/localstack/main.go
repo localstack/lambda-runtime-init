@@ -148,10 +148,11 @@ func main() {
 		UserLogger().Debugln("Process running as non-root user.")
 	}
 
-	logCollector := NewLogCollector()
-
 	// file watcher for hot-reloading
 	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
+
+	logCollector := NewLogCollector()
+	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -164,7 +165,8 @@ func main() {
 			stopDnsServer()
 		}).
 		SetExtensionsFlag(true).
-		SetInitCachingFlag(true)
+		SetInitCachingFlag(true).
+		SetLogsEgressAPI(localStackLogsEgressApi)
 
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
