@@ -204,7 +204,23 @@ func main() {
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
 
 	// start runtime init
-	go InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
+	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
+
+	log.Infoln("Await Initialized ...")
+	if err := interopServer.delegate.AwaitInitialized(); err != nil {
+		log.Errorln("TODO: send execution environment error status to LocalStack")
+		// TODO: distinguish between ErrInitResetReceived and ErrInitDoneFailed
+		if err := interopServer.localStackAdapter.SendStatus(Error, []byte{}); err != nil {
+			log.Fatalln("TODO: handle LocalStack not reachable and abort")
+		}
+		return
+	}
+	log.Infoln("Initialized done. Sending status ready to LocalStack")
+
+	log.Infoln("Send ready status to LocalStack")
+	if err := interopServer.localStackAdapter.SendStatus(Ready, []byte{}); err != nil {
+		log.Fatalln("TODO: handle LocalStack not reachable and abort")
+	}
 
 	<-exitChan
 }

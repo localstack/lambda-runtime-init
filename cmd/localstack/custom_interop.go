@@ -41,8 +41,8 @@ const (
 )
 
 func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
-	status_url := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(status_url, "application/json", bytes.NewReader(payload))
+	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
+	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -96,6 +96,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
+				// TODO: Set X-Ray trace metadata or call .Reserve before invoke
 				invokeStart := time.Now()
 				err = server.Invoke(invokeResp, &interop.Invoke{
 					ID:                 invokeR.InvokeId,
