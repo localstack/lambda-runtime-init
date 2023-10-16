@@ -96,15 +96,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
-				// TODO: Set X-Ray trace metadata or call .Reserve before invoke
 				invokeStart := time.Now()
 				err = server.Invoke(invokeResp, &interop.Invoke{
 					ID:                 invokeR.InvokeId,
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
 					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
 					NeedDebugLogs:      true,
-
-					TraceID: invokeR.TraceId,
+					TraceID:            invokeR.TraceId,
 					// TODO: set correct segment ID from request
 					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
 					//CognitoIdentityID:     "",

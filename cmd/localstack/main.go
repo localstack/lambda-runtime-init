@@ -205,23 +205,24 @@ func main() {
 	}
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
 
-	// start runtime init
+	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
+	// notification channels and status fields are properly initialized before `AwaitInitialized`
+	log.Debugln("Starting runtime init.")
 	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
 
-	log.Infoln("Await Initialized ...")
+	log.Debugln("Awaiting initialization of runtime init.")
 	if err := interopServer.delegate.AwaitInitialized(); err != nil {
-		log.Errorln("TODO: send execution environment error status to LocalStack")
-		// TODO: distinguish between ErrInitResetReceived and ErrInitDoneFailed
+		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
+		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
 		if err := interopServer.localStackAdapter.SendStatus(Error, []byte{}); err != nil {
-			log.Fatalln("TODO: handle LocalStack not reachable and abort")
+			log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
 		}
 		return
 	}
-	log.Infoln("Initialized done. Sending status ready to LocalStack")
 
-	log.Infoln("Send ready status to LocalStack")
+	log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
 	if err := interopServer.localStackAdapter.SendStatus(Ready, []byte{}); err != nil {
-		log.Fatalln("TODO: handle LocalStack not reachable and abort")
+		log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
 	}
 
 	<-exitChan
