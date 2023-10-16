@@ -132,6 +132,15 @@ func main() {
 		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
+	// fix permissions of the layers directory for better AWS parity
+	if err := ChmodRecursively("/opt", 0755); err != nil {
+		log.Warnln("Could not change file mode recursively of directory /opt:", err)
+	}
+	// fix permissions of the tmp directory for better AWS parity
+	if err := ChmodRecursively("/tmp", 0700); err != nil {
+		log.Warnln("Could not change file mode recursively of directory /tmp:", err)
+	}
+
 	// parse CLI args
 	bootstrap, handler := getBootstrap(os.Args)
 
@@ -141,11 +150,15 @@ func main() {
 		gid := 990
 		AddUser(lsOpts.User, uid, gid)
 		if err := os.Chown("/tmp", uid, gid); err != nil {
-			log.Warnln("Could not change owner of /tmp:", err)
+			log.Warnln("Could not change owner of directory /tmp:", err)
 		}
 		UserLogger().Debugln("Process running as root user.")
-		DropPrivileges(lsOpts.User)
-		UserLogger().Debugln("Process running as non-root user.")
+		err := DropPrivileges(lsOpts.User)
+		if err != nil {
+			log.Warnln("Could not drop root privileges.", err)
+		} else {
+			UserLogger().Debugln("Process running as non-root user.")
+		}
 	}
 
 	logCollector := NewLogCollector()
