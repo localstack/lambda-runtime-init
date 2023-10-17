@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // LOCALSTACK CHANGES 2022-03-10: modified/collected file from /cmd/aws-lambda-rie/* into this util
 // LOCALSTACK CHANGES 2022-03-10: minor refactoring of PrintEndReports
+// LOCALSTACK CHANGES 2023-10-06: reflect getBootstrap and InitHandler API updates
 
 package main
 
