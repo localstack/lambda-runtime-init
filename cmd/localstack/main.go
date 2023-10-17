@@ -227,9 +227,8 @@ func main() {
 	if err := interopServer.delegate.AwaitInitialized(); err != nil {
 		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
-		if err := interopServer.localStackAdapter.SendStatus(Error, []byte{}); err != nil {
-			log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
-		}
+		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
+		// callback SendInitErrorResponse because it contains the correct error response payload.
 		return
 	}
 

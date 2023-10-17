@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/core"
 	"go.amzn.com/lambda/core/statejson"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
@@ -202,24 +201,15 @@ func (c *CustomInteropServer) SendResponse(invokeID string, headers map[string]s
 
 func (c *CustomInteropServer) SendErrorResponse(invokeID string, response *interop.ErrorResponse) error {
 	log.Traceln("SendErrorResponse called")
-	is, err := c.InternalState()
-	if err != nil {
-		return err
-	}
-	rs := is.Runtime.State
-	if rs.Name == core.RuntimeInitErrorStateName {
-		err = c.localStackAdapter.SendStatus(Error, response.Payload)
-		if err != nil {
-			return err
-		}
-	}
-
 	return c.delegate.SendErrorResponse(invokeID, response)
 }
 
 // SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
 func (c *CustomInteropServer) SendInitErrorResponse(invokeID string, response *interop.ErrorResponse) error {
 	log.Traceln("SendInitErrorResponse called")
+	if err := c.localStackAdapter.SendStatus(Error, response.Payload); err != nil {
+		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
+	}
 	return c.delegate.SendInitErrorResponse(invokeID, response)
 }
 
