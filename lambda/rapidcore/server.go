@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// LOCALSTACK CHANGES 2023-10-17: pass request metadata into .Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
 
 package rapidcore
 
@@ -645,7 +646,7 @@ func (s *Server) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invo
 		// The logic would be almost identical, except that init failures could manifest
 		// through return values of FastInvoke and not Reserve()
 
-		reserveResp, err := s.Reserve("", "", "")
+		reserveResp, err := s.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
 		if err != nil {
 			log.Infof("ReserveFailed: %s", err)
 		}
