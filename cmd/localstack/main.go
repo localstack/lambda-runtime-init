@@ -161,14 +161,15 @@ func main() {
 		}
 	}
 
-	logCollector := NewLogCollector()
-
 	// file watcher for hot-reloading
 	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
 
+	logCollector := NewLogCollector()
+	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
+
 	// build sandbox
 	sandbox := rapidcore.
-		NewSandboxBuilder(bootstrap).
+		NewSandboxBuilder().
 		//SetTracer(tracer).
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
@@ -178,7 +179,7 @@ func main() {
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
-		SetTailLogOutput(logCollector)
+		SetLogsEgressAPI(localStackLogsEgressApi)
 
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
@@ -192,7 +193,7 @@ func main() {
 	})
 	runDaemon(d) // async
 
-	defaultInterop := sandbox.InteropServer()
+	defaultInterop := sandbox.DefaultInteropServer()
 	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
 	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
@@ -204,7 +205,10 @@ func main() {
 	})
 
 	// initialize all flows and start runtime API
-	go sandbox.Create()
+	sandboxContext, internalStateFn := sandbox.Create()
+	// Populate our custom interop server
+	interopServer.SetSandboxContext(sandboxContext)
+	interopServer.SetInternalStateGetter(internalStateFn)
 
 	// get timeout
 	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT") // TODO: collect all AWS_* env parsing
@@ -214,8 +218,24 @@ func main() {
 	}
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
 
-	// start runtime init
-	go InitHandler(sandbox, GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds)) // TODO: replace this with a custom init
+	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
+	// notification channels and status fields are properly initialized before `AwaitInitialized`
+	log.Debugln("Starting runtime init.")
+	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
+
+	log.Debugln("Awaiting initialization of runtime init.")
+	if err := interopServer.delegate.AwaitInitialized(); err != nil {
+		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
+		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
+		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
+		// callback SendInitErrorResponse because it contains the correct error response payload.
+		return
+	}
+
+	log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
+	if err := interopServer.localStackAdapter.SendStatus(Ready, []byte{}); err != nil {
+		log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
+	}
 
 	<-exitChan
 }
