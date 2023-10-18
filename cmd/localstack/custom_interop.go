@@ -1,7 +1,7 @@
 package main
 
 // Original implementation: lambda/rapidcore/server.go includes Server struct with state
-// Server interface between Runtime API and this init: lambda/interop/model.go:358
+// Server interface between Runtime API and this init: lambda/interop/model.go:Server
 
 import (
 	"bytes"
