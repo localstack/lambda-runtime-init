@@ -145,7 +145,7 @@ func main() {
 	bootstrap, handler := getBootstrap(os.Args)
 
 	// Switch to non-root user and drop root privileges
-	if IsRootUser() && lsOpts.User != "" {
+	if IsRootUser() && lsOpts.User != "" && lsOpts.User != "root" {
 		uid := 993
 		gid := 990
 		AddUser(lsOpts.User, uid, gid)
