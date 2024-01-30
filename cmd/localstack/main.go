@@ -20,6 +20,7 @@ type LsOpts struct {
 	User                string
 	CodeArchives        string
 	HotReloadingPaths   []string
+	FileWatcher         string
 	EnableDnsServer     string
 	LocalstackIP        string
 	InitLogLevel        string
@@ -50,6 +51,7 @@ func InitLsOpts() *LsOpts {
 		// optional or empty
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
+		FileWatcher:         os.Getenv("LOCALSTACK_FILE_WATCHER"),
 		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
@@ -225,7 +227,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext)
+	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcher)
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
