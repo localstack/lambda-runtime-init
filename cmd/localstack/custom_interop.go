@@ -194,23 +194,23 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 	return server
 }
 
-func (c *CustomInteropServer) SendResponse(invokeID string, headers map[string]string, reader io.Reader, trailers http.Header, request *interop.CancellableRequest) error {
+func (c *CustomInteropServer) SendResponse(invokeID string, resp *interop.StreamableInvokeResponse) error {
 	log.Traceln("SendResponse called")
-	return c.delegate.SendResponse(invokeID, headers, reader, trailers, request)
+	return c.delegate.SendResponse(invokeID, resp)
 }
 
-func (c *CustomInteropServer) SendErrorResponse(invokeID string, response *interop.ErrorResponse) error {
+func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendErrorResponse called")
-	return c.delegate.SendErrorResponse(invokeID, response)
+	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
 // SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
-func (c *CustomInteropServer) SendInitErrorResponse(invokeID string, response *interop.ErrorResponse) error {
+func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendInitErrorResponse called")
-	if err := c.localStackAdapter.SendStatus(Error, response.Payload); err != nil {
+	if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
 		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
 	}
-	return c.delegate.SendInitErrorResponse(invokeID, response)
+	return c.delegate.SendInitErrorResponse(resp)
 }
 
 func (c *CustomInteropServer) GetCurrentInvokeID() string {
@@ -248,7 +248,7 @@ func (c *CustomInteropServer) Reset(reason string, timeoutMs int64) (*statejson.
 	return c.delegate.Reset(reason, timeoutMs)
 }
 
-func (c *CustomInteropServer) AwaitRelease() (*statejson.InternalStateDescription, error) {
+func (c *CustomInteropServer) AwaitRelease() (*statejson.ReleaseResponse, error) {
 	log.Traceln("AwaitRelease called")
 	return c.delegate.AwaitRelease()
 }

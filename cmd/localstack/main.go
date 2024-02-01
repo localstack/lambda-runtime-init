@@ -16,6 +16,7 @@ type LsOpts struct {
 	InteropPort         string
 	RuntimeEndpoint     string
 	RuntimeId           string
+	AccountId           string
 	InitTracingPort     string
 	User                string
 	CodeArchives        string
@@ -41,6 +42,7 @@ func InitLsOpts() *LsOpts {
 		// required
 		RuntimeEndpoint: GetEnvOrDie("LOCALSTACK_RUNTIME_ENDPOINT"),
 		RuntimeId:       GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
+		AccountId:       GetenvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
 		// optional with default
 		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
 		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
@@ -72,6 +74,7 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_ENABLE_XRAY_TELEMETRY",
 		"LOCALSTACK_INIT_LOG_LEVEL",
 		"LOCALSTACK_POST_INVOKE_WAIT_MS",
+		"LOCALSTACK_FUNCTION_ACCOUNT_ID",
 
 		// Docker container ID
 		"HOSTNAME",
@@ -230,7 +233,7 @@ func main() {
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
 	log.Debugln("Starting runtime init.")
-	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap) // TODO: replace this with a custom init
+	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
 
 	log.Debugln("Awaiting initialization of runtime init.")
 	if err := interopServer.delegate.AwaitInitialized(); err != nil {

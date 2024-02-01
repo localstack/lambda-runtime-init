@@ -11,7 +11,6 @@ import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/env"
 	"golang.org/x/sys/unix"
 	"io"
@@ -34,7 +33,7 @@ func isBootstrapFileExist(filePath string) bool {
 	return !os.IsNotExist(err) && !file.IsDir()
 }
 
-func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
+func getBootstrap(args []string) (interop.Bootstrap, string) {
 	var bootstrapLookupCmd []string
 	var handler string
 	currentWorkingDir := "/var/task" // default value
@@ -89,7 +88,7 @@ func getBootstrap(args []string) (*rapidcore.Bootstrap, string) {
 		}
 	}
 
-	return rapidcore.NewBootstrapSingleCmd(bootstrapLookupCmd, currentWorkingDir, ""), handler
+	return NewSimpleBootstrap(bootstrapLookupCmd, currentWorkingDir), handler
 }
 
 func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
@@ -205,7 +204,7 @@ func getSubFoldersInList(prefix string, pathList []string) (oldFolders []string,
 	return
 }
 
-func InitHandler(sandbox Sandbox, functionVersion string, timeout int64, bs interop.Bootstrap) (time.Time, time.Time) {
+func InitHandler(sandbox Sandbox, functionVersion string, timeout int64, bs interop.Bootstrap, accountId string) (time.Time, time.Time) {
 	additionalFunctionEnvironmentVariables := map[string]string{}
 
 	// Add default Env Vars if they were not defined. This is a required otherwise 1p Python2.7, Python3.6, and
@@ -231,6 +230,7 @@ func InitHandler(sandbox Sandbox, functionVersion string, timeout int64, bs inte
 		AwsKey:            os.Getenv("AWS_ACCESS_KEY_ID"),
 		AwsSecret:         os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		AwsSession:        os.Getenv("AWS_SESSION_TOKEN"),
+		AccountID:         accountId,
 		XRayDaemonAddress: GetenvWithDefault("AWS_XRAY_DAEMON_ADDRESS", "127.0.0.1:2000"),
 		FunctionName:      GetenvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
 		FunctionVersion:   functionVersion,
