@@ -21,10 +21,10 @@ compile-lambda-linux-all:
 	make ARCH=arm64 compile-lambda-linux
 
 compile-with-docker:
-	docker run --rm --env GOPROXY=direct -v $(shell pwd):/LambdaRuntimeLocal -w /LambdaRuntimeLocal golang:1.19 make ARCH=${ARCH} compile-lambda-linux
+	docker run --rm --env GOPROXY=direct -v $(shell pwd):/LambdaRuntimeLocal -w /LambdaRuntimeLocal golang:1.20 make ARCH=${ARCH} compile-lambda-linux
 
 compile-lambda-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=${GO_ARCH_${ARCH}} go build -ldflags "${RELEASE_BUILD_LINKER_FLAGS}" -gcflags="${GC_FLAGS}" -o ${DESTINATION_${ARCH}} ./cmd/localstack
+	CGO_ENABLED=0 GOOS=linux GOARCH=${GO_ARCH_${ARCH}} go build -buildvcs=false -ldflags "${RELEASE_BUILD_LINKER_FLAGS}" -gcflags="${GC_FLAGS}" -o ${DESTINATION_${ARCH}} ./cmd/localstack
 
 tests:
 	go test ./...
