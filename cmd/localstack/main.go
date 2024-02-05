@@ -178,6 +178,7 @@ func main() {
 
 	logCollector := NewLogCollector()
 	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
+	tracer := NewLocalStackTracer()
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -191,7 +192,8 @@ func main() {
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
-		SetLogsEgressAPI(localStackLogsEgressApi)
+		SetLogsEgressAPI(localStackLogsEgressApi).
+		SetTracer(tracer)
 
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
