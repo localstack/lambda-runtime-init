@@ -16,8 +16,8 @@ type ChangeListener struct {
 	watchedFolders     []string
 }
 
-func NewChangeListener(debouncingInterval time.Duration) (*ChangeListener, error) {
-	watcher, err := filenotify.New(200 * time.Millisecond)
+func NewChangeListener(debouncingInterval time.Duration, fileWatcherStrategy string) (*ChangeListener, error) {
+	watcher, err := filenotify.New(200*time.Millisecond, fileWatcherStrategy)
 	if err != nil {
 		log.Errorln("Cannot create change listener due to filewatcher error.", err)
 		return nil, err

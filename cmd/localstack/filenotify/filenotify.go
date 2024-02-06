@@ -38,14 +38,28 @@ func shouldUseEventWatcher() bool {
 }
 
 // New tries to use a fs-event watcher, and falls back to the poller if there is an error
-func New(interval time.Duration) (FileWatcher, error) {
+func New(interval time.Duration, fileWatcherStrategy string) (FileWatcher, error) {
+	if fileWatcherStrategy != "" {
+		log.Debugln("Forced usage of filewatcher strategy: ", fileWatcherStrategy)
+		if fileWatcherStrategy == "event" {
+			if watcher, err := NewEventWatcher(); err == nil {
+				return watcher, nil
+			} else {
+				log.Fatalln("Event based filewatcher is selected, but unable to start. Please try setting the filewatcher to polling. Error: ", err)
+			}
+		} else if fileWatcherStrategy == "polling" {
+			return NewPollingWatcher(interval), nil
+		} else {
+			log.Fatalf("Invalid filewatcher strategy %s. Only event and polling are allowed.\n", fileWatcherStrategy)
+		}
+	}
 	if shouldUseEventWatcher() {
 		if watcher, err := NewEventWatcher(); err == nil {
-			log.Debugln("Using event based filewatcher")
+			log.Debugln("Using event based filewatcher (autodetected)")
 			return watcher, nil
 		}
 	}
-	log.Debugln("Using polling based filewatcher")
+	log.Debugln("Using polling based filewatcher (autodetected)")
 	return NewPollingWatcher(interval), nil
 }
 

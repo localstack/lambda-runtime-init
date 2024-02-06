@@ -156,14 +156,14 @@ func RunDNSRewriter(opts *LsOpts, ctx context.Context) {
 	log.Debugln("DNS server stopped")
 }
 
-func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context) {
+func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
 	if len(targetPaths) == 1 && targetPaths[0] == "" {
 		log.Debugln("Hot reloading disabled.")
 		return
 	}
 	defaultDebouncingDuration := 500 * time.Millisecond
 	log.Infoln("Hot reloading enabled, starting filewatcher.", targetPaths)
-	changeListener, err := NewChangeListener(defaultDebouncingDuration)
+	changeListener, err := NewChangeListener(defaultDebouncingDuration, fileWatcherStrategy)
 	if err != nil {
 		log.Errorln("Hot reloading disabled due to change listener error.", err)
 		return
