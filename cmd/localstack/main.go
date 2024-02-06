@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"github.com/grafana/pyroscope-go"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -91,6 +93,37 @@ func UnsetLsEnvs() {
 }
 
 func main() {
+	runtime.SetMutexProfileFraction(5)
+	runtime.SetBlockProfileRate(5)
+
+	pyroscope.Start(pyroscope.Config{
+		ApplicationName: "localstack.lambda.init",
+
+		// replace this with the address of pyroscope server
+		ServerAddress: "http://pyroscope-server:4040",
+
+		// you can disable logging by setting this to nil
+		Logger: pyroscope.StandardLogger,
+
+		// you can provide static tags via a map:
+		Tags: map[string]string{"function": os.Getenv("AWS_LAMBDA_FUNCTION_NAME"), "id": os.Getenv("LOCALSTACK_RUNTIME_ID")},
+
+		ProfileTypes: []pyroscope.ProfileType{
+			// these profile types are enabled by default:
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+
+			// these profile types are optional:
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileMutexCount,
+			pyroscope.ProfileMutexDuration,
+			pyroscope.ProfileBlockCount,
+			pyroscope.ProfileBlockDuration,
+		},
+	})
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
 

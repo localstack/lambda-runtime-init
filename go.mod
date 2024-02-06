@@ -10,6 +10,7 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/go-chi/chi v4.1.2+incompatible
 	github.com/google/uuid v1.3.0
+	github.com/grafana/pyroscope-go v1.1.1
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/miekg/dns v1.1.50
 	github.com/shirou/gopsutil v2.19.10+incompatible
@@ -23,7 +24,9 @@ require (
 	github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.4 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.6 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/klauspost/compress v1.17.3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.0 // indirect
 	golang.org/x/mod v0.8.0 // indirect
