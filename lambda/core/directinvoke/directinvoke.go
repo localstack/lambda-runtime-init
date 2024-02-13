@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// LOCALSTACK CHANGES 2024-02-13: casting of MaxPayloadSize
 
 package directinvoke
 
@@ -51,7 +52,7 @@ var ResetReasonMap = map[string]fatalerror.ErrorType{
 	"timeout": fatalerror.SandboxTimeout,
 }
 
-var MaxDirectResponseSize int64 = interop.MaxPayloadSize // this is intentionally not a constant so we can configure it via CLI
+var MaxDirectResponseSize = int64(interop.MaxPayloadSize) // this is intentionally not a constant so we can configure it via CLI
 var ResponseBandwidthRate int64 = interop.ResponseBandwidthRate
 var ResponseBandwidthBurstSize int64 = interop.ResponseBandwidthBurstSize
 
@@ -104,7 +105,7 @@ func ReceiveDirectInvoke(w http.ResponseWriter, r *http.Request, token interop.T
 
 	now := metering.Monotime()
 
-	MaxDirectResponseSize = interop.MaxPayloadSize
+	MaxDirectResponseSize = int64(interop.MaxPayloadSize)
 	if maxPayloadSize := r.Header.Get(MaxPayloadSizeHeader); maxPayloadSize != "" {
 		if n, err := strconv.ParseInt(maxPayloadSize, 10, 64); err == nil && n >= -1 {
 			MaxDirectResponseSize = n

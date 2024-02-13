@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// LOCALSTACK CHANGES 2024-02-13: adjust error message for ErrorResponseTooLarge to be in parity with what AWS returns; make MaxPayloadSize adjustable
 
 package interop
 
@@ -18,10 +19,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var MaxPayloadSize int = 6*1024*1024 + 100 // 6 MiB + 100 bytes
+
 // MaxPayloadSize max event body size declared as LAMBDA_EVENT_BODY_SIZE
 const (
-	MaxPayloadSize = 6*1024*1024 + 100 // 6 MiB + 100 bytes
-
 	ResponseBandwidthRate      = 2 * 1024 * 1024 // default average rate of 2 MiB/s
 	ResponseBandwidthBurstSize = 6 * 1024 * 1024 // default burst size of 6 MiB
 
@@ -355,7 +356,7 @@ type ErrorResponseTooLargeDI struct {
 
 // ErrorResponseTooLarge is returned when response provided by Runtime does not fit into shared memory buffer
 func (s *ErrorResponseTooLarge) Error() string {
-	return fmt.Sprintf("Response payload size (%d bytes) exceeded maximum allowed payload size (%d bytes).", s.ResponseSize, s.MaxResponseSize)
+	return fmt.Sprintf("Response payload size exceeded maximum allowed payload size (%d bytes).", s.MaxResponseSize)
 }
 
 // AsErrorResponse generates ErrorInvokeResponse from ErrorResponseTooLarge

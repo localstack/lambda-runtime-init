@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// LOCALSTACK CHANGES 2024-02-13: casting of MaxPayloadSize
 
 package rendering
 
@@ -174,7 +175,7 @@ func (s *InvokeRenderer) bufferInvokeRequest() error {
 	defer s.requestMutex.Unlock()
 	var err error = nil
 	if s.requestBuffer.Len() == 0 {
-		reader := io.LimitReader(s.invoke.Payload, interop.MaxPayloadSize)
+		reader := io.LimitReader(s.invoke.Payload, int64(interop.MaxPayloadSize))
 		start := time.Now()
 		_, err = s.requestBuffer.ReadFrom(reader)
 		s.metrics = InvokeRendererMetrics{

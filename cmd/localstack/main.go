@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"os"
 	"runtime/debug"
@@ -28,6 +29,7 @@ type LsOpts struct {
 	EdgePort            string
 	EnableXRayTelemetry string
 	PostInvokeWaitMS    string
+	MaxPayloadSize      string
 }
 
 func GetEnvOrDie(env string) string {
@@ -50,6 +52,7 @@ func InitLsOpts() *LsOpts {
 		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
 		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
 		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
+		MaxPayloadSize:  GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
 		// optional or empty
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -77,6 +80,7 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_INIT_LOG_LEVEL",
 		"LOCALSTACK_POST_INVOKE_WAIT_MS",
 		"LOCALSTACK_FUNCTION_ACCOUNT_ID",
+		"LOCALSTACK_MAX_PAYLOAD_SIZE",
 
 		// Docker container ID
 		"HOSTNAME",
@@ -127,6 +131,13 @@ func main() {
 	default:
 		log.Fatal("Invalid value for LOCALSTACK_INIT_LOG_LEVEL")
 	}
+
+	// patch MaxPayloadSize
+	payloadSize, err := strconv.Atoi(lsOpts.MaxPayloadSize)
+	if err != nil {
+		log.Panicln("Please specify a number for LOCALSTACK_MAX_PAYLOAD_SIZE")
+	}
+	interop.MaxPayloadSize = payloadSize
 
 	// enable dns server
 	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
