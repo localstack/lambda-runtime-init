@@ -1,5 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+// LOCALSTACK CHANGES 2024-02-13: adjust error message for ErrorResponseTooLarge to be in parity with what AWS returns
 
 package interop
 
@@ -355,7 +356,7 @@ type ErrorResponseTooLargeDI struct {
 
 // ErrorResponseTooLarge is returned when response provided by Runtime does not fit into shared memory buffer
 func (s *ErrorResponseTooLarge) Error() string {
-	return fmt.Sprintf("Response payload size (%d bytes) exceeded maximum allowed payload size (%d bytes).", s.ResponseSize, s.MaxResponseSize)
+	return fmt.Sprintf("Response payload size exceeded maximum allowed payload size (%d bytes).", s.MaxResponseSize)
 }
 
 // AsErrorResponse generates ErrorInvokeResponse from ErrorResponseTooLarge

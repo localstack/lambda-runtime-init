@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/go-chi/chi"
 	log "github.com/sirupsen/logrus"
@@ -117,8 +118,8 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
 				if err != nil {
-					switch err {
-					case rapidcore.ErrInvokeTimeout:
+					switch {
+					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
 						isErr = true
 						errorResponse := ErrorResponse{
@@ -137,6 +138,8 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 						if err != nil {
 							log.Fatalln("unable to write to response")
 						}
+					case errors.Is(err, rapidcore.ErrInvokeDoneFailed):
+						// we can actually just continue here, error message is sent below
 					default:
 						log.Fatalln(err)
 					}
