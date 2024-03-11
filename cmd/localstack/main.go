@@ -23,6 +23,7 @@ type LsOpts struct {
 	CodeArchives        string
 	HotReloadingPaths   []string
 	FileWatcherStrategy string
+	ChmodPaths          string
 	LocalstackIP        string
 	InitLogLevel        string
 	EdgePort            string
@@ -59,6 +60,7 @@ func InitLsOpts() *LsOpts {
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
+		ChmodPaths:          GetenvWithDefault("LOCALSTACK_CHMOD_PATHS", "[]"),
 	}
 }
 
@@ -73,12 +75,12 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_USER",
 		"LOCALSTACK_CODE_ARCHIVES",
 		"LOCALSTACK_HOT_RELOADING_PATHS",
-		"LOCALSTACK_ENABLE_DNS_SERVER",
 		"LOCALSTACK_ENABLE_XRAY_TELEMETRY",
 		"LOCALSTACK_INIT_LOG_LEVEL",
 		"LOCALSTACK_POST_INVOKE_WAIT_MS",
 		"LOCALSTACK_FUNCTION_ACCOUNT_ID",
 		"LOCALSTACK_MAX_PAYLOAD_SIZE",
+		"LOCALSTACK_CHMOD_PATHS",
 
 		// Docker container ID
 		"HOSTNAME",
@@ -140,6 +142,10 @@ func main() {
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives: " + err.Error())
+	}
+
+	if err := AdaptFilesystemPermissions(lsOpts.ChmodPaths); err != nil {
+		log.Warnln("Could not change file mode of code directories:", err)
 	}
 
 	// set file permissions of the tmp directory for better AWS parity

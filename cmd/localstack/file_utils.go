@@ -1,10 +1,36 @@
 package main
 
 import (
+	"encoding/json"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 )
+
+type Chmod struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+}
+
+func AdaptFilesystemPermissions(chmodInfoString string) error {
+	var chmodInfo []Chmod
+	err := json.Unmarshal([]byte(chmodInfoString), &chmodInfo)
+	if err != nil {
+		return err
+	}
+	for _, chmod := range chmodInfo {
+		mode, err := strconv.ParseInt(chmod.Mode, 0, 32)
+		if err != nil {
+			return err
+		}
+		if err := ChmodRecursively(chmod.Path, os.FileMode(mode)); err != nil {
+			log.Warnf("Could not change file mode recursively of directory %s: %s\n", chmod.Path, err)
+		}
+	}
+	return nil
+}
 
 // Inspired by https://stackoverflow.com/questions/73864379/golang-change-permission-os-chmod-and-os-chowm-recursively
 // but using the more efficient WalkDir API
