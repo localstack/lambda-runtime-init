@@ -23,7 +23,6 @@ type LsOpts struct {
 	CodeArchives        string
 	HotReloadingPaths   []string
 	FileWatcherStrategy string
-	EnableDnsServer     string
 	LocalstackIP        string
 	InitLogLevel        string
 	EdgePort            string
@@ -57,7 +56,6 @@ func InitLsOpts() *LsOpts {
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 		FileWatcherStrategy: os.Getenv("LOCALSTACK_FILE_WATCHER_STRATEGY"),
-		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
@@ -139,10 +137,6 @@ func main() {
 	}
 	interop.MaxPayloadSize = payloadSize
 
-	// enable dns server
-	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
-	go RunDNSRewriter(lsOpts, dnsServerContext)
-
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives: " + err.Error())
@@ -200,8 +194,6 @@ func main() {
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
-			log.Debugln("Stopping DNS server")
-			stopDnsServer()
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
