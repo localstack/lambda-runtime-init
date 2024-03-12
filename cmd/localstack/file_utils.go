@@ -14,6 +14,9 @@ type Chmod struct {
 	Mode string `json:"mode"`
 }
 
+// AdaptFilesystemPermissions Adapts the file system permissions to the mode specified in the chmodInfoString parameter
+// chmodInfoString should be a json encoded list of `Chmod` structs.
+// example: '[{"path": "/opt", "mode": "0755"}]'. The mode string should be an octal representation of the targeted file mode.
 func AdaptFilesystemPermissions(chmodInfoString string) error {
 	var chmodInfo []Chmod
 	err := json.Unmarshal([]byte(chmodInfoString), &chmodInfo)
