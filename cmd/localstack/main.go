@@ -23,7 +23,7 @@ type LsOpts struct {
 	CodeArchives        string
 	HotReloadingPaths   []string
 	FileWatcherStrategy string
-	EnableDnsServer     string
+	ChmodPaths          string
 	LocalstackIP        string
 	InitLogLevel        string
 	EdgePort            string
@@ -57,10 +57,10 @@ func InitLsOpts() *LsOpts {
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 		FileWatcherStrategy: os.Getenv("LOCALSTACK_FILE_WATCHER_STRATEGY"),
-		EnableDnsServer:     os.Getenv("LOCALSTACK_ENABLE_DNS_SERVER"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
+		ChmodPaths:          GetenvWithDefault("LOCALSTACK_CHMOD_PATHS", "[]"),
 	}
 }
 
@@ -75,12 +75,12 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_USER",
 		"LOCALSTACK_CODE_ARCHIVES",
 		"LOCALSTACK_HOT_RELOADING_PATHS",
-		"LOCALSTACK_ENABLE_DNS_SERVER",
 		"LOCALSTACK_ENABLE_XRAY_TELEMETRY",
 		"LOCALSTACK_INIT_LOG_LEVEL",
 		"LOCALSTACK_POST_INVOKE_WAIT_MS",
 		"LOCALSTACK_FUNCTION_ACCOUNT_ID",
 		"LOCALSTACK_MAX_PAYLOAD_SIZE",
+		"LOCALSTACK_CHMOD_PATHS",
 
 		// Docker container ID
 		"HOSTNAME",
@@ -139,31 +139,13 @@ func main() {
 	}
 	interop.MaxPayloadSize = payloadSize
 
-	// enable dns server
-	dnsServerContext, stopDnsServer := context.WithCancel(context.Background())
-	go RunDNSRewriter(lsOpts, dnsServerContext)
-
 	// download code archive if env variable is set
 	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
-	// set file permissions of the tmp directory for better AWS parity
-	if err := ChmodRecursively("/tmp", 0700); err != nil {
-		log.Warnln("Could not change file mode recursively of directory /tmp:", err)
-	}
-	// set file permissions of the layers directory for better AWS parity
-	if err := ChmodRecursively("/opt", 0755); err != nil {
-		log.Warnln("Could not change file mode recursively of directory /opt:", err)
-	}
-	// set file permissions of the code directory if at least one layer is present for better AWS parity
-	// Limitation: hot reloading likely breaks file permission parity for /var/task in combination with layers
-	// Heuristic for detecting the presence of layers. It might fail for an empty layer or image-based Lambda.
-	if isDirEmpty, _ := IsDirEmpty("/opt"); !isDirEmpty {
-		log.Debugln("Detected layer present")
-		if err := ChmodRecursively("/var/task", 0755); err != nil {
-			log.Warnln("Could not change file mode recursively of directory /var/task:", err)
-		}
+	if err := AdaptFilesystemPermissions(lsOpts.ChmodPaths); err != nil {
+		log.Warnln("Could not change file mode of code directories:", err)
 	}
 
 	// parse CLI args
@@ -200,8 +182,6 @@ func main() {
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
-			log.Debugln("Stopping DNS server")
-			stopDnsServer()
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
