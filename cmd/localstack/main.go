@@ -148,24 +148,6 @@ func main() {
 		log.Warnln("Could not change file mode of code directories:", err)
 	}
 
-	// set file permissions of the tmp directory for better AWS parity
-	if err := ChmodRecursively("/tmp", 0700); err != nil {
-		log.Warnln("Could not change file mode recursively of directory /tmp:", err)
-	}
-	// set file permissions of the layers directory for better AWS parity
-	if err := ChmodRecursively("/opt", 0755); err != nil {
-		log.Warnln("Could not change file mode recursively of directory /opt:", err)
-	}
-	// set file permissions of the code directory if at least one layer is present for better AWS parity
-	// Limitation: hot reloading likely breaks file permission parity for /var/task in combination with layers
-	// Heuristic for detecting the presence of layers. It might fail for an empty layer or image-based Lambda.
-	if isDirEmpty, _ := IsDirEmpty("/opt"); !isDirEmpty {
-		log.Debugln("Detected layer present")
-		if err := ChmodRecursively("/var/task", 0755); err != nil {
-			log.Warnln("Could not change file mode recursively of directory /var/task:", err)
-		}
-	}
-
 	// parse CLI args
 	bootstrap, handler := getBootstrap(os.Args)
 
