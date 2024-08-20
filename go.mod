@@ -1,20 +1,20 @@
 module go.amzn.com
 
-go 1.20
+go 1.22
 
 require (
-	github.com/aws/aws-lambda-go v1.41.0
+	github.com/aws/aws-lambda-go v1.46.0
 	github.com/aws/aws-sdk-go v1.44.62
 	github.com/aws/aws-xray-daemon v0.0.0-20230202010956-acaf06e9a638
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
 	github.com/fsnotify/fsnotify v1.6.0
-	github.com/go-chi/chi v4.1.2+incompatible
-	github.com/google/uuid v1.3.0
+	github.com/go-chi/chi v1.5.5
+	github.com/google/uuid v1.6.0
 	github.com/jessevdk/go-flags v1.5.0
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/sirupsen/logrus v1.9.3
-	github.com/stretchr/testify v1.8.4
-	golang.org/x/sync v0.2.0
+	github.com/stretchr/testify v1.9.0
+	golang.org/x/sync v0.6.0
 	golang.org/x/sys v0.14.0
 )
 
@@ -24,7 +24,7 @@ require (
 	github.com/go-ole/go-ole v1.2.4 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/objx v0.5.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/net v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/yaml.v2 v2.2.8 // indirect
