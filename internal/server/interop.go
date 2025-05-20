@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/localstack/lambda-runtime-init/lambda/logging"
-	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	"github.com/localstack/lambda-runtime-init/internal/logging"
+	"github.com/localstack/lambda-runtime-init/internal/utils"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"

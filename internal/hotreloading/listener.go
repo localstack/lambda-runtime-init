@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/localstack/lambda-runtime-init/lambda/filenotify"
-	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	"github.com/localstack/lambda-runtime-init/internal/filenotify"
+	"github.com/localstack/lambda-runtime-init/internal/utils"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/rapidcore/standalone"
 )

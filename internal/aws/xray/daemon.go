@@ -25,7 +25,7 @@ import (
 	"github.com/aws/aws-xray-daemon/pkg/telemetry"
 	"github.com/aws/aws-xray-daemon/pkg/tracesegment"
 	"github.com/aws/aws-xray-daemon/pkg/util"
-	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	"github.com/localstack/lambda-runtime-init/internal/utils"
 
 	"github.com/aws/aws-sdk-go/aws"
 	log "github.com/cihub/seelog"

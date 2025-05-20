@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	"github.com/localstack/lambda-runtime-init/internal/utils"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/env"
