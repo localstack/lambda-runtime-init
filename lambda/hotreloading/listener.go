@@ -1,11 +1,14 @@
-package main
+package hotreloading
 
 import (
-	"github.com/fsnotify/fsnotify"
-	log "github.com/sirupsen/logrus"
-	"go.amzn.com/cmd/localstack/filenotify"
 	"os"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/localstack/lambda-runtime-init/lambda/filenotify"
+	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/rapidcore/standalone"
 )
 
 type ChangeListener struct {
@@ -50,7 +53,7 @@ func (c *ChangeListener) Watch() {
 				if err != nil {
 					log.Errorln("Error stating event file: ", event.Name, err)
 				} else if stat.IsDir() {
-					subfolders := getSubFolders(event.Name)
+					subfolders := utils.GetSubFolders(event.Name)
 					for _, folder := range subfolders {
 						err = c.watcher.Add(folder)
 						c.watchedFolders = append(c.watchedFolders, folder)
@@ -62,7 +65,7 @@ func (c *ChangeListener) Watch() {
 				// remove in case of remove / rename (rename within the folder will trigger a separate create event)
 			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				// remove all file watchers if it is in our folders list
-				toBeRemovedDirs, newWatchedFolders := getSubFoldersInList(event.Name, c.watchedFolders)
+				toBeRemovedDirs, newWatchedFolders := utils.GetSubFoldersInList(event.Name, c.watchedFolders)
 				c.watchedFolders = newWatchedFolders
 				for _, dir := range toBeRemovedDirs {
 					err := c.watcher.Remove(dir)
@@ -85,7 +88,7 @@ func (c *ChangeListener) Watch() {
 func (c *ChangeListener) AddTargetPaths(targetPaths []string) {
 	// Add all target paths and subfolders
 	for _, targetPath := range targetPaths {
-		subfolders := getSubFolders(targetPath)
+		subfolders := utils.GetSubFolders(targetPath)
 		log.Infoln("Subfolders: ", subfolders)
 		for _, target := range subfolders {
 			err := c.watcher.Add(target)
@@ -123,4 +126,19 @@ func (c *ChangeListener) debounceChannel() {
 
 func (c *ChangeListener) Close() error {
 	return c.watcher.Close()
+}
+
+func ResetListener(changeChannel <-chan bool, server standalone.InteropServer) {
+	for {
+		_, more := <-changeChannel
+		if !more {
+			return
+		}
+		log.Println("Resetting environment...")
+		_, err := server.Reset("HotReload", 2000)
+		if err != nil {
+			log.Warnln("Error resetting server: ", err)
+		}
+	}
+
 }

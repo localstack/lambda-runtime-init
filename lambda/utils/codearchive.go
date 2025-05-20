@@ -1,14 +1,15 @@
-package main
+package utils
 
 import (
 	"archive/zip"
 	"encoding/json"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type ArchiveDownload struct {

@@ -1,12 +1,15 @@
-package main
+package utils
 
 import (
 	"encoding/json"
-	log "github.com/sirupsen/logrus"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type Chmod struct {
@@ -65,4 +68,35 @@ func IsDirEmpty(name string) (bool, error) {
 		return true, nil
 	}
 	return false, err // Either not empty or error, suits both cases
+}
+
+func IsFileExist(filePath string) bool {
+	file, err := os.Stat(filePath)
+	return !os.IsNotExist(err) && !file.IsDir()
+}
+
+func GetSubFolders(dirPath string) []string {
+	var subfolders []string
+	err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			subfolders = append(subfolders, path)
+		}
+		return err
+	})
+	if err != nil {
+		log.Errorln("Error listing directory contents: ", err)
+		return subfolders
+	}
+	return subfolders
+}
+
+func GetSubFoldersInList(prefix string, pathList []string) (oldFolders []string, newFolders []string) {
+	for _, pathItem := range pathList {
+		if strings.HasPrefix(pathItem, prefix) {
+			oldFolders = append(oldFolders, pathItem)
+		} else {
+			newFolders = append(newFolders, pathItem)
+		}
+	}
+	return
 }

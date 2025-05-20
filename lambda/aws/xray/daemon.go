@@ -2,7 +2,7 @@
 // It has been adapted for the use as a library and not as a separate executable.
 // The config is set directly in code instead of loading it from a config file
 
-package main
+package xray
 
 import (
 	"encoding/json"
@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-xray-daemon/pkg/telemetry"
 	"github.com/aws/aws-xray-daemon/pkg/tracesegment"
 	"github.com/aws/aws-xray-daemon/pkg/util"
+	"github.com/localstack/lambda-runtime-init/lambda/utils"
 
 	"github.com/aws/aws-sdk-go/aws"
 	log "github.com/cihub/seelog"
@@ -72,14 +73,14 @@ type Daemon struct {
 }
 
 // https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html
-func initConfig(endpoint string, logLevel string) *cfg.Config {
+func NewConfig(endpoint string, logLevel string) *cfg.Config {
 	xrayConfig := cfg.DefaultConfig()
 	xrayConfig.Socket.UDPAddress = "127.0.0.1:2000"
 	xrayConfig.Socket.TCPAddress = "127.0.0.1:2000"
 	xrayConfig.Endpoint = endpoint
 	xrayConfig.NoVerifySSL = util.Bool(true) // obvious
 	xrayConfig.LocalMode = util.Bool(true)   // skip EC2 metadata check
-	xrayConfig.Region = GetEnvOrDie("AWS_REGION")
+	xrayConfig.Region = utils.GetEnvOrDie("AWS_REGION")
 	xrayConfig.Logging.LogLevel = logLevel
 	//xrayConfig.TotalBufferSizeMB
 	//xrayConfig.RoleARN = roleARN
@@ -87,7 +88,7 @@ func initConfig(endpoint string, logLevel string) *cfg.Config {
 	return xrayConfig
 }
 
-func initDaemon(config *cfg.Config, enableTelemetry bool) *Daemon {
+func NewDaemon(config *cfg.Config, enableTelemetry bool) *Daemon {
 	if logFile != "" {
 		var fileWriter io.Writer
 		if *config.Logging.LogRotation {
@@ -172,16 +173,16 @@ func initDaemon(config *cfg.Config, enableTelemetry bool) *Daemon {
 	return daemon
 }
 
-func runDaemon(daemon *Daemon) {
+func (d *Daemon) Run() {
 	// Start http server for proxying requests to xray
-	go daemon.server.Serve()
+	go d.server.Serve()
 
-	for i := 0; i < daemon.receiverCount; i++ {
-		go daemon.poll()
+	for i := 0; i < d.receiverCount; i++ {
+		go d.Poll()
 	}
 }
 
-func (d *Daemon) close() {
+func (d *Daemon) Close() {
 	for i := 0; i < d.receiverCount; i++ {
 		<-d.done
 	}
@@ -201,13 +202,13 @@ func (d *Daemon) close() {
 	log.Debugf("Shutdown finished. Current epoch in nanoseconds: %v", time.Now().UnixNano())
 }
 
-func (d *Daemon) stop() {
+func (d *Daemon) Stop() {
 	d.sock.Close()
 	d.server.Close()
 }
 
 // Returns number of bytes read from socket connection.
-func (d *Daemon) read(buf *[]byte) int {
+func (d *Daemon) Read(buf *[]byte) int {
 	bufVal := *buf
 	rlen, err := d.sock.Read(bufVal)
 	switch err := err.(type) {
@@ -225,7 +226,7 @@ func (d *Daemon) read(buf *[]byte) int {
 	return rlen
 }
 
-func (d *Daemon) poll() {
+func (d *Daemon) Poll() {
 	separator := []byte(protocolSeparator)
 	fallBackBuffer := make([]byte, d.receiveBufferSize)
 	splitBuf := make([][]byte, 2)
@@ -238,7 +239,7 @@ func (d *Daemon) poll() {
 			bufPointer = &fallBackBuffer
 			fallbackPointerUsed = true
 		}
-		rlen := d.read(bufPointer)
+		rlen := d.Read(bufPointer)
 		if rlen > 0 && d.enableTelemetry {
 			telemetry.T.SegmentReceived(1)
 		}

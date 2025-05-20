@@ -1,4 +1,4 @@
-package main
+package logging
 
 import (
 	"strings"
@@ -37,7 +37,7 @@ func (lc *LogCollector) reset() {
 	lc.RuntimeLogs = []string{}
 }
 
-func (lc *LogCollector) getLogs() LogResponse {
+func (lc *LogCollector) GetLogs() LogResponse {
 	lc.mutex.Lock()
 	defer lc.mutex.Unlock()
 	response := LogResponse{

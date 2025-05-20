@@ -1,14 +1,15 @@
 // User utilities to create UNIX users and drop root privileges
-package main
+package utils
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"os/user"
 	"strconv"
 	"strings"
 	"syscall"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // AddUser adds a UNIX user (e.g., sbx_user1051) to the passwd and shadow files if not already present

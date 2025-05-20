@@ -1,4 +1,4 @@
-package main
+package server
 
 // Original implementation: lambda/rapidcore/server.go includes Server struct with state
 // Server interface between Runtime API and this init: lambda/interop/model.go:Server
@@ -8,29 +8,52 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-chi/chi"
-	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/core/statejson"
-	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/rapidcore"
-	"go.amzn.com/lambda/rapidcore/standalone"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi"
+	"github.com/localstack/lambda-runtime-init/lambda/logging"
+	"github.com/localstack/lambda-runtime-init/lambda/utils"
+	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/rapidcore"
+	"go.amzn.com/lambda/rapidcore/standalone"
 )
 
-type CustomInteropServer struct {
-	delegate          *rapidcore.Server
-	localStackAdapter *LocalStackAdapter
-	port              string
-	upstreamEndpoint  string
+type LsOpts struct {
+	InteropPort         string
+	RuntimeEndpoint     string
+	RuntimeId           string
+	AccountId           string
+	InitTracingPort     string
+	User                string
+	CodeArchives        string
+	HotReloadingPaths   []string
+	FileWatcherStrategy string
+	ChmodPaths          string
+	LocalstackIP        string
+	InitLogLevel        string
+	EdgePort            string
+	EnableXRayTelemetry string
+	PostInvokeWaitMS    string
+	MaxPayloadSize      string
 }
 
-type LocalStackAdapter struct {
-	UpstreamEndpoint string
-	RuntimeId        string
+// Create a type-alias to allow the rapidcore.Server to be easier embedded
+// into the current implementation.
+// TODO: Rename this from delegate.
+type delegate = rapidcore.Server
+
+type CustomInteropServer struct {
+	// Embed the rapidcore.Server in the custom implementation.
+	*delegate
+
+	port             string
+	upstreamEndpoint string
+	runtimeId        string
 }
 
 type LocalStackStatus string
@@ -39,15 +62,6 @@ const (
 	Ready LocalStackStatus = "ready"
 	Error LocalStackStatus = "error"
 )
-
-func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
-	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	return nil
-}
 
 // The InvokeRequest is sent by LocalStack to trigger an invocation
 type InvokeRequest struct {
@@ -65,15 +79,12 @@ type ErrorResponse struct {
 	StackTrace   []string `json:"stackTrace,omitempty"`
 }
 
-func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
+func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *logging.LogCollector) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
 		delegate:         delegate.(*rapidcore.Server),
 		port:             lsOpts.InteropPort,
 		upstreamEndpoint: lsOpts.RuntimeEndpoint,
-		localStackAdapter: &LocalStackAdapter{
-			UpstreamEndpoint: lsOpts.RuntimeEndpoint,
-			RuntimeId:        lsOpts.RuntimeId,
-		},
+		runtimeId:        lsOpts.RuntimeId,
 	}
 
 	// TODO: extract this
@@ -93,7 +104,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				}
 
 				invokeResp := &standalone.ResponseWriterProxy{}
-				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
+				functionVersion := utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
 				invokeStart := time.Now()
@@ -153,10 +164,10 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 					time.Sleep(time.Duration(waitMS) * time.Millisecond)
 				}
 				timeoutDuration := time.Duration(timeout) * time.Second
-				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+				memorySize := utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
 				PrintEndReports(invokeR.InvokeId, "", memorySize, invokeStart, timeoutDuration, logCollector)
 
-				serializedLogs, err2 := json.Marshal(logCollector.getLogs())
+				serializedLogs, err2 := json.Marshal(logCollector.GetLogs())
 				if err2 == nil {
 					_, err2 = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
 					// TODO: handle err
@@ -197,81 +208,35 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 	return server
 }
 
-func (c *CustomInteropServer) SendResponse(invokeID string, resp *interop.StreamableInvokeResponse) error {
-	log.Traceln("SendResponse called")
-	return c.delegate.SendResponse(invokeID, resp)
-}
-
-func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.ErrorInvokeResponse) error {
-	log.Traceln("SendErrorResponse called")
-	return c.delegate.SendErrorResponse(invokeID, resp)
+func (c *CustomInteropServer) SendStatus(status LocalStackStatus, payload []byte) error {
+	statusUrl := fmt.Sprintf("%s/status/%s/%s", c.upstreamEndpoint, c.runtimeId, status)
+	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
 func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
-	log.Traceln("SendInitErrorResponse called")
-	if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
+	log.Debug("Forwarding SendInitErrorResponse status to LocalStack at %s.", c.upstreamEndpoint)
+	if err := c.SendStatus(Error, resp.Payload); err != nil {
 		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
 	}
 	return c.delegate.SendInitErrorResponse(resp)
 }
 
-func (c *CustomInteropServer) GetCurrentInvokeID() string {
-	log.Traceln("GetCurrentInvokeID called")
-	return c.delegate.GetCurrentInvokeID()
+func (c *CustomInteropServer) SendResponse(invokeID string, resp *interop.StreamableInvokeResponse) error {
+	// c.ToggleDirectInvoke()
+	return c.delegate.SendResponse(invokeID, resp)
 }
 
-func (c *CustomInteropServer) SendRuntimeReady() error {
-	log.Traceln("SendRuntimeReady called")
-	return c.delegate.SendRuntimeReady()
+func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.ErrorInvokeResponse) error {
+	// c.ToggleDirectInvoke()
+	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
-func (c *CustomInteropServer) Init(i *interop.Init, invokeTimeoutMs int64) error {
-	log.Traceln("Init called")
-	return c.delegate.Init(i, invokeTimeoutMs)
-}
-
-func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
-	log.Traceln("Invoke called")
-	return c.delegate.Invoke(responseWriter, invoke)
-}
-
-func (c *CustomInteropServer) FastInvoke(w http.ResponseWriter, i *interop.Invoke, direct bool) error {
-	log.Traceln("FastInvoke called")
-	return c.delegate.FastInvoke(w, i, direct)
-}
-
-func (c *CustomInteropServer) Reserve(id string, traceID, lambdaSegmentID string) (*rapidcore.ReserveResponse, error) {
-	log.Traceln("Reserve called")
-	return c.delegate.Reserve(id, traceID, lambdaSegmentID)
-}
-
-func (c *CustomInteropServer) Reset(reason string, timeoutMs int64) (*statejson.ResetDescription, error) {
-	log.Traceln("Reset called")
-	return c.delegate.Reset(reason, timeoutMs)
-}
-
-func (c *CustomInteropServer) AwaitRelease() (*statejson.ReleaseResponse, error) {
-	log.Traceln("AwaitRelease called")
-	return c.delegate.AwaitRelease()
-}
-
-func (c *CustomInteropServer) InternalState() (*statejson.InternalStateDescription, error) {
-	log.Traceln("InternalState called")
-	return c.delegate.InternalState()
-}
-
-func (c *CustomInteropServer) CurrentToken() *interop.Token {
-	log.Traceln("CurrentToken called")
-	return c.delegate.CurrentToken()
-}
-
-func (c *CustomInteropServer) SetSandboxContext(sbCtx interop.SandboxContext) {
-	log.Traceln("SetSandboxContext called")
-	c.delegate.SetSandboxContext(sbCtx)
-}
-
-func (c *CustomInteropServer) SetInternalStateGetter(cb interop.InternalStateGetter) {
-	log.Traceln("SetInternalStateGetter called")
-	c.delegate.InternalStateGetter = cb
+func (c *CustomInteropServer) ToggleDirectInvoke() {
+	ctx := c.delegate.GetInvokeContext()
+	ctx.Direct = true
 }
