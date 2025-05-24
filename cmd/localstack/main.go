@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/localstack/lambda-runtime-init/internal/aws/xray"
 	"github.com/localstack/lambda-runtime-init/internal/bootstrap"
 	"github.com/localstack/lambda-runtime-init/internal/hotreloading"
@@ -24,8 +25,8 @@ import (
 func InitLsOpts() *server.LsOpts {
 	return &server.LsOpts{
 		// required
-		RuntimeEndpoint: utils.GetEnvOrDie("LOCALSTACK_RUNTIME_ENDPOINT"),
-		RuntimeId:       utils.GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
+		RuntimeEndpoint: utils.MustGetEnv("LOCALSTACK_RUNTIME_ENDPOINT"),
+		RuntimeId:       utils.MustGetEnv("LOCALSTACK_RUNTIME_ID"),
 		AccountId:       utils.GetEnvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
 		// optional with default
 		InteropPort:     utils.GetEnvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
@@ -42,6 +43,19 @@ func InitLsOpts() *server.LsOpts {
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
 		ChmodPaths:          utils.GetEnvWithDefault("LOCALSTACK_CHMOD_PATHS", "[]"),
+	}
+}
+
+func InitFunctionConfig() server.FunctionConfig {
+	return server.FunctionConfig{
+		FunctionName:         utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
+		FunctionVersion:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST"),
+		FunctionTimeoutSec:   utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_TIMEOUT", "30"),
+		InitializationType:   utils.GetEnvWithDefault("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand"),
+		LogGroupName:         utils.GetEnvWithDefault("AWS_LAMBDA_LOG_GROUP_NAME", "/aws/lambda/Functions"),
+		LogStreamName:        utils.GetEnvWithDefault("AWS_LAMBDA_LOG_STREAM_NAME", "$LATEST"),
+		FunctionMemorySizeMb: utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "3008"),
+		FunctionHandler:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
 	}
 }
 
@@ -81,6 +95,9 @@ func main() {
 
 	// configuration parsing
 	lsOpts := InitLsOpts()
+	functionConf := InitFunctionConfig()
+	awsEnvConf, _ := config.NewEnvConfig()
+
 	UnsetLsEnvs()
 
 	// set up logging following the Logrus logging levels: https://github.com/sirupsen/logrus#level-logging
@@ -155,6 +172,7 @@ func main() {
 	logCollector := logging.NewLogCollector()
 	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
 	tracer := tracing.NewLocalStackTracer()
+	// localSupervisor := supervisor.NewLocalSupervisor()
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -169,6 +187,10 @@ func main() {
 		SetLogsEgressAPI(localStackLogsEgressApi).
 		SetTracer(tracer)
 
+	// Externally set supervisor for metrics tracking
+	// sandbox.SetSupervisor(localSupervisor)
+	// sandbox.SetRuntimeFsRootPath(localSupervisor.RootPath)
+
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
 	xrayConfig := xray.NewConfig(endpoint, xRayLogLevel)
@@ -181,9 +203,6 @@ func main() {
 	})
 	d.Run() // async
 
-	defaultInterop := sandbox.DefaultInteropServer()
-	interopServer := server.NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
-	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
 	}
@@ -194,25 +213,27 @@ func main() {
 
 	// initialize all flows and start runtime API
 	sandboxContext, internalStateFn := sandbox.Create()
-	// Populate our custom interop server
-	interopServer.SetSandboxContext(sandboxContext)
-	interopServer.SetInternalStateGetter(internalStateFn)
+	// Populate our interop server
+	sandbox.DefaultInteropServer().SetSandboxContext(sandboxContext)
+	sandbox.DefaultInteropServer().SetInternalStateGetter(internalStateFn)
 
-	// get timeout
-	invokeTimeoutEnv := utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT") // TODO: collect all AWS_* env parsing
-	invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	go hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+	localStackService := server.NewLocalStackAPI(sandbox.LambdaInvokeAPI(), bootstrap, logCollector, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
 	log.Debugln("Starting runtime init.")
-	server.InitHandler(sandbox.LambdaInvokeAPI(), utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
+	localStackService.Initialize()
+
+	invokeServer := server.NewServer(lsOpts.InteropPort, localStackService)
+	invokeServer.RegisterOnShutdown(localStackService.Close)
+
+	defer invokeServer.Shutdown(context.Background())
+
+	go invokeServer.ListenAndServe()
+	go hotreloading.RunHotReloadingListener(sandbox.DefaultInteropServer(), lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
 
 	log.Debugln("Awaiting initialization of runtime init.")
-	if err := interopServer.AwaitInitialized(); err != nil {
+	if err := sandbox.DefaultInteropServer().AwaitInitialized(); err != nil {
 		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
 		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
@@ -221,7 +242,7 @@ func main() {
 	}
 
 	log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
-	if err := interopServer.SendStatus(server.Ready, []byte{}); err != nil {
+	if err := localStackService.SendStatus(server.Ready, []byte{}); err != nil {
 		log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
 	}
 

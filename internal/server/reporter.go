@@ -3,26 +3,27 @@ package server
 import (
 	"fmt"
 	"io"
-	"math"
-	"time"
 )
 
-// TODO: This should be creating a Report struct which, in turn, should be Stringified into the "REPORT RequestId: ..." syntax
+// TODO: Replace with interop.ReportMetrics when Memory stats are actually being collected
 
-func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
-	// Calculate invoke duration
-	invokeDuration := math.Min(float64(time.Now().Sub(invokeStart).Nanoseconds()),
-		float64(timeoutDuration.Nanoseconds())) / float64(time.Millisecond)
+type InvokeReport struct {
+	InvokeId         string
+	DurationMs       float64
+	BilledDurationMs float64
+	// TODO: Make this a unint and properly collect it with a supervisor
+	MemorySizeMB    string
+	MaxMemoryUsedMB string
+}
 
-	_, _ = fmt.Fprintln(w, "END RequestId: "+invokeId)
-	// We set the Max Memory Used and Memory Size to be the same (whatever it is set to) since there is
-	// not a clean way to get this information from rapidcore
-	_, _ = fmt.Fprintf(w,
+func (r *InvokeReport) Print(w io.Writer) error {
+	_, err := fmt.Fprintf(w,
 		"REPORT RequestId: %s\t"+
-			initDuration+
 			"Duration: %.2f ms\t"+
 			"Billed Duration: %.f ms\t"+
 			"Memory Size: %s MB\t"+
 			"Max Memory Used: %s MB\t\n",
-		invokeId, invokeDuration, math.Ceil(invokeDuration), memorySize, memorySize)
+		r.InvokeId, r.DurationMs, r.BilledDurationMs, r.MemorySizeMB, r.MaxMemoryUsedMB)
+
+	return err
 }
