@@ -4,22 +4,32 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/localstack/lambda-runtime-init/internal/aws/xray"
 	"github.com/localstack/lambda-runtime-init/internal/bootstrap"
+	"github.com/localstack/lambda-runtime-init/internal/events"
 	"github.com/localstack/lambda-runtime-init/internal/hotreloading"
 	"github.com/localstack/lambda-runtime-init/internal/logging"
 	"github.com/localstack/lambda-runtime-init/internal/server"
+
+	"github.com/localstack/lambda-runtime-init/internal/supervisor"
 	"github.com/localstack/lambda-runtime-init/internal/tracing"
 	"github.com/localstack/lambda-runtime-init/internal/utils"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/core/directinvoke"
+	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
+	supv "go.amzn.com/lambda/supervisor"
+	"go.amzn.com/lambda/telemetry"
 )
 
 func InitLsOpts() *server.LsOpts {
@@ -97,6 +107,7 @@ func main() {
 	lsOpts := InitLsOpts()
 	functionConf := InitFunctionConfig()
 	awsEnvConf, _ := config.NewEnvConfig()
+	awsEnvConf.Credentials.AccountID = lsOpts.AccountId
 
 	UnsetLsEnvs()
 
@@ -136,6 +147,10 @@ func main() {
 		log.Panicln("Please specify a number for LOCALSTACK_MAX_PAYLOAD_SIZE")
 	}
 	directinvoke.MaxDirectResponseSize = int64(payloadSize)
+	if directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize {
+		log.Infof("Large response size detected (%d bytes), forcing streaming mode", directinvoke.MaxDirectResponseSize)
+		directinvoke.InvokeResponseMode = interop.InvokeResponseModeStreaming
+	}
 
 	// download code archive if env variable is set
 	if err := utils.DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
@@ -166,13 +181,26 @@ func main() {
 		}
 	}
 
-	// file watcher for hot-reloading
-	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
+	// file watcher for hot-reloading
+	fileWatcherContext, cancelFileWatcher := context.WithCancel(ctx)
+	defer cancelFileWatcher()
+
+	// Custom Interop Server
+	defaultServer := rapidcore.NewServer()
+	lsAdapter := server.NewLocalStackAdapter(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
+	interopServer := server.NewInteropServer(defaultServer, lsAdapter)
+
+	// Services required for Sandbox environment
 	logCollector := logging.NewLogCollector()
 	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
 	tracer := tracing.NewLocalStackTracer()
-	// localSupervisor := supervisor.NewLocalSupervisor()
+	eventsListener := events.NewEventsListener(lsAdapter, &telemetry.NoOpEventsAPI{})
+
+	defaultSupv := supv.NewLocalSupervisor()
+	wrappedSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener, interopServer.InternalState)
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -185,22 +213,26 @@ func main() {
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer)
+		SetTracer(tracer).
+		SetInteropServer(interopServer).
+		SetSupervisor(wrappedSupv)
+
+	// SetEventsAPI(eventsListener)
 
 	// Externally set supervisor for metrics tracking
 	// sandbox.SetSupervisor(localSupervisor)
 	// sandbox.SetRuntimeFsRootPath(localSupervisor.RootPath)
 
 	// xray daemon
-	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
+	endpoint := "http://" + net.JoinHostPort(lsOpts.LocalstackIP, lsOpts.EdgePort)
 	xrayConfig := xray.NewConfig(endpoint, xRayLogLevel)
 	d := xray.NewDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
-	sandbox.AddShutdownFunc(func() {
+	defer func() {
 		log.Debugln("Shutting down xray daemon")
 		d.Stop()
 		log.Debugln("Flushing segments in xray daemon")
 		d.Close()
-	})
+	}()
 	d.Run() // async
 
 	if len(handler) > 0 {
@@ -214,37 +246,63 @@ func main() {
 	// initialize all flows and start runtime API
 	sandboxContext, internalStateFn := sandbox.Create()
 	// Populate our interop server
-	sandbox.DefaultInteropServer().SetSandboxContext(sandboxContext)
-	sandbox.DefaultInteropServer().SetInternalStateGetter(internalStateFn)
+	interopServer.SetSandboxContext(sandboxContext)
+	interopServer.SetInternalStateGetter(internalStateFn)
 
-	localStackService := server.NewLocalStackAPI(sandbox.LambdaInvokeAPI(), bootstrap, logCollector, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
+	localStackService := server.NewLocalStackService(interopServer, logCollector, lsAdapter, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
 	log.Debugln("Starting runtime init.")
-	localStackService.Initialize()
+	if err := localStackService.Initialize(bootstrap); err != nil {
+		log.Fatalf("Failed to initialize runtime: %s", err)
+		return
+	}
 
 	invokeServer := server.NewServer(lsOpts.InteropPort, localStackService)
 	invokeServer.RegisterOnShutdown(localStackService.Close)
 
 	defer invokeServer.Shutdown(context.Background())
 
-	go invokeServer.ListenAndServe()
-	go hotreloading.RunHotReloadingListener(sandbox.DefaultInteropServer(), lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%s", lsOpts.InteropPort))
+
+		if err != nil {
+			log.Fatalf("failed to start listener for custom interops server: %s", err)
+		}
+		go invokeServer.Serve(listener)
+		log.Debugf("LocalStack API gateway listening on %s", listener.Addr().String())
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+	}()
+
+	wg.Wait()
 
 	log.Debugln("Awaiting initialization of runtime init.")
-	if err := sandbox.DefaultInteropServer().AwaitInitialized(); err != nil {
+	if err := interopServer.AwaitInitialized(); err != nil {
 		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
 		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
 		// callback SendInitErrorResponse because it contains the correct error response payload.
-		return
+		// return
+	} else {
+		log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
+		if err := localStackService.SendStatus(server.Ready, []byte{}); err != nil {
+			log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
+		}
 	}
 
-	log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
-	if err := localStackService.SendStatus(server.Ready, []byte{}); err != nil {
-		log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
+	select {
+	case <-ctx.Done():
+	case <-exitChan:
 	}
 
-	<-exitChan
 }

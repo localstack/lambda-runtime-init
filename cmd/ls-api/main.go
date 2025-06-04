@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"net/http"
 )
 
 const apiPort = 9563
@@ -33,7 +34,7 @@ func main() {
 		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
 		}
 
 		w.WriteHeader(200)
@@ -47,7 +48,7 @@ func main() {
 		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0, \"fail\": \"yes\"}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
 		}
 
 		w.WriteHeader(200)
@@ -57,6 +58,7 @@ func main() {
 		}
 	})
 
+	log.Infof("Listening on port :%d", listenPort)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", listenPort), router)
 	if err != nil {
 		log.Fatal(err)
@@ -74,7 +76,7 @@ func invokeLogsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type InvokeRequest struct {
-	InvokeId string `json:"invoke-id"`
+	InvokeId string `json:"request-id"`
 	Payload  string `json:"payload"`
 }
 
