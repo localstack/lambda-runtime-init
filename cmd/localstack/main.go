@@ -197,7 +197,7 @@ func main() {
 	logCollector := logging.NewLogCollector()
 	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
 	tracer := tracing.NewLocalStackTracer()
-	eventsListener := events.NewEventsListener(lsAdapter, &telemetry.NoOpEventsAPI{})
+	eventsListener := events.NewEventsListener(lsAdapter, &telemetry.NoOpEventsAPI{}, logCollector, functionConf)
 
 	defaultSupv := supv.NewLocalSupervisor()
 	wrappedSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener, interopServer.InternalState)
@@ -215,7 +215,8 @@ func main() {
 		SetLogsEgressAPI(localStackLogsEgressApi).
 		SetTracer(tracer).
 		SetInteropServer(interopServer).
-		SetSupervisor(wrappedSupv)
+		SetSupervisor(wrappedSupv).
+		SetEventsAPI(eventsListener)
 
 	// SetEventsAPI(eventsListener)
 
@@ -255,8 +256,7 @@ func main() {
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
 	log.Debugln("Starting runtime init.")
 	if err := localStackService.Initialize(bootstrap); err != nil {
-		log.Fatalf("Failed to initialize runtime: %s", err)
-		return
+		log.WithError(err).Warnf("Failed to initialize runtime. Initialization will be retried in the next invoke.")
 	}
 
 	invokeServer := server.NewServer(lsOpts.InteropPort, localStackService)

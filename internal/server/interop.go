@@ -77,13 +77,13 @@ func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke 
 	defer close(releaseRespChan)
 
 	go func() {
-		reserveResp, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
+		_, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
 		if err != nil && !errors.Is(err, rapidcore.ErrAlreadyReserved) {
 			releaseRespChan <- err
 			return
 		}
 
-		invoke.DeadlineNs = fmt.Sprintf("%d", metering.Monotime()+reserveResp.Token.FunctionTimeout.Nanoseconds())
+		invoke.DeadlineNs = fmt.Sprintf("%d", metering.Monotime()+c.Server.GetInvokeTimeout().Nanoseconds())
 		go func() {
 			isDirect := directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize
 			if err := c.Server.FastInvoke(responseWriter, invoke, isDirect); err != nil {

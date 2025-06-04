@@ -14,17 +14,18 @@ type LogCollector struct {
 	RuntimeLogs []string
 }
 
-func (lc *LogCollector) Write(p []byte) (n int, err error) {
-	lc.Put(string(p))
-	return len(p), nil
-}
-
 func NewLogCollector() *LogCollector {
 	return &LogCollector{
 		RuntimeLogs: []string{},
 		mutex:       &sync.Mutex{},
 	}
 }
+
+func (lc *LogCollector) Write(p []byte) (n int, err error) {
+	lc.Put(string(p))
+	return len(p), nil
+}
+
 func (lc *LogCollector) Put(line string) {
 	lc.mutex.Lock()
 	defer lc.mutex.Unlock()

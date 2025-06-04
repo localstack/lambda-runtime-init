@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +12,6 @@ import (
 	"github.com/localstack/lambda-runtime-init/internal/logging"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/metering"
-	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/env"
 )
 
@@ -62,12 +58,13 @@ func NewLocalStackService(
 }
 
 func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
-	timeout, err := time.ParseDuration(ls.function.FunctionTimeoutSec + "s")
+	initTimeout := time.Second * 10
+	invokeTimeout, err := time.ParseDuration(ls.function.FunctionTimeoutSec + "s")
 	if err != nil {
 		log.WithError(err).
 			WithField("AWS_LAMBDA_FUNCTION_TIMEOUT", ls.function.FunctionTimeoutSec).
 			Warnf("Failed to set function timeout from environment. Defaulting to 30s.")
-		timeout = time.Second * 30
+		invokeTimeout = time.Second * 30
 	}
 
 	memorySize, err := strconv.ParseUint(ls.function.FunctionMemorySizeMb, 10, 64)
@@ -81,8 +78,8 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 	initRequest := &interop.Init{
 		AccountID:         ls.aws.Credentials.AccountID,
 		Handler:           ls.function.FunctionHandler,
-		InvokeTimeoutMs:   timeout.Milliseconds(),
-		InitTimeoutMs:     timeout.Milliseconds(),
+		InvokeTimeoutMs:   invokeTimeout.Milliseconds(),
+		InitTimeoutMs:     initTimeout.Milliseconds(),
 		InstanceMaxMemory: memorySize,
 		// TODO: LocalStack does not correctly set this to the LS container's <IP>:<PORT>
 		XRayDaemonAddress: ls.xrayEndpoint,
@@ -101,10 +98,15 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 		Bootstrap: bs,
 	}
 
-	initStart := metering.Monotime()
-	err = ls.sandbox.Init(initRequest, timeout.Milliseconds())
-	ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
-	return err
+	// initStart := metering.Monotime()
+	// err = ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
+	// ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
+
+	// if err != nil {
+	// 	_, _ = fmt.Fprintf(ls.logCollector, "INIT_REPORT Init Duration: %.2f ms Phase: init Status: %s", ls.initDuration)
+	// }
+
+	return ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
 }
 
 func (ls *LocalStackService) SendStatus(status LocalStackStatus, payload []byte) error {
@@ -130,7 +132,7 @@ func (ls *LocalStackService) SendResponse(invokeId string, payload []byte) error
 func (ls *LocalStackService) InvokeForward(invoke InvokeRequest) ([]byte, error) {
 	proxyResponseWriter := NewResponseWriterProxy()
 
-	_, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)
+	// _, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)
 
 	clientContext, err := base64.StdEncoding.DecodeString(invoke.ClientContext)
 	if err != nil {
@@ -152,28 +154,28 @@ func (ls *LocalStackService) InvokeForward(invoke InvokeRequest) ([]byte, error)
 		log.WithError(invokeErr).Error("Failed invocation.")
 	}
 
-	invokeStartTime := invokePayload.InvokeReceivedTime
-	invokeEndTime := metering.Monotime()
+	// invokeStartTime := invokePayload.InvokeReceivedTime
+	// invokeEndTime := metering.Monotime()
 
-	durationMs := float64(invokeEndTime-invokeStartTime) / float64(time.Millisecond)
+	// durationMs := float64(invokeEndTime-invokeStartTime) / float64(time.Millisecond)
 
-	report := InvokeReport{
-		InvokeId:         invoke.InvokeId,
-		DurationMs:       durationMs,
-		BilledDurationMs: math.Ceil(durationMs),
-		MemorySizeMB:     ls.function.FunctionMemorySizeMb,
-		MaxMemoryUsedMB:  ls.function.FunctionMemorySizeMb,
-		InitDurationMs:   ls.initDuration,
-	}
+	// report := InvokeReport{
+	// 	InvokeId:         invoke.InvokeId,
+	// 	DurationMs:       durationMs,
+	// 	BilledDurationMs: math.Ceil(durationMs),
+	// 	MemorySizeMB:     ls.function.FunctionMemorySizeMb,
+	// 	MaxMemoryUsedMB:  ls.function.FunctionMemorySizeMb,
+	// 	InitDurationMs:   ls.initDuration,
+	// }
 
-	switch invokeErr {
-	case rapidcore.ErrInvokeTimeout:
-		report.Status = "timeout"
-	}
+	// switch invokeErr {
+	// case rapidcore.ErrInvokeTimeout:
+	// 	report.Status = "timeout"
+	// }
 
-	if err := report.Print(ls.logCollector); err != nil {
-		log.WithError(err).Error("Failed to write END report.")
-	}
+	// if err := report.Print(ls.logCollector); err != nil {
+	// 	log.WithError(err).Error("Failed to write END report.")
+	// }
 
 	return proxyResponseWriter.Body(), invokeErr
 }

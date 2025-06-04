@@ -42,3 +42,19 @@ func (r *InvokeReport) Print(w io.Writer) error {
 
 	return nil
 }
+
+type InitReport struct {
+	InvokeId   string
+	DurationMs float64
+	Status     string
+}
+
+func (r *InitReport) Print(w io.Writer) error {
+	_, err := fmt.Fprintf(w,
+		"INIT_REPORT Init Duration: %.2f ms Phase: init Status: %s",
+		r.DurationMs,
+		r.Status,
+	)
+
+	return err
+}
