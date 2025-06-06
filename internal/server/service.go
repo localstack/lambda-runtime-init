@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +15,8 @@ import (
 	"github.com/localstack/lambda-runtime-init/internal/logging"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/metering"
+	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/env"
 )
 
@@ -20,7 +25,6 @@ type LocalStackService struct {
 
 	sandbox *CustomInteropServer
 	adapter *LocalStackAdapter
-	// supervisor model.SupervisorClient
 
 	logCollector *logging.LogCollector
 
@@ -75,6 +79,17 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 		memorySize = 128
 	}
 
+	customerEnvironmentVariables := map[string]string{}
+	// Cant use env.CustomerEnvironmentVariables() since this strips internal envars (like creds)
+	// from the variables passed to the process.
+	for _, e := range os.Environ() {
+		key, val, err := env.SplitEnvironmentVariable(e)
+		if err != nil {
+			continue
+		}
+		customerEnvironmentVariables[key] = val
+	}
+
 	initRequest := &interop.Init{
 		AccountID:         ls.aws.Credentials.AccountID,
 		Handler:           ls.function.FunctionHandler,
@@ -84,8 +99,12 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 		// TODO: LocalStack does not correctly set this to the LS container's <IP>:<PORT>
 		XRayDaemonAddress: ls.xrayEndpoint,
 
+		AwsKey:     ls.aws.Credentials.AccessKeyID,
+		AwsSecret:  ls.aws.Credentials.SecretAccessKey,
+		AwsSession: ls.aws.Credentials.SessionToken,
+
 		EnvironmentVariables:         env.NewEnvironment(),
-		CustomerEnvironmentVariables: env.CustomerEnvironmentVariables(),
+		CustomerEnvironmentVariables: customerEnvironmentVariables,
 		SandboxType:                  interop.SandboxClassic,
 
 		// TODO: Implement runtime management controls
@@ -98,22 +117,22 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 		Bootstrap: bs,
 	}
 
-	// initStart := metering.Monotime()
-	// err = ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
-	// ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
+	initStart := metering.Monotime()
+	err = ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
+	ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
 
-	// if err != nil {
-	// 	_, _ = fmt.Fprintf(ls.logCollector, "INIT_REPORT Init Duration: %.2f ms Phase: init Status: %s", ls.initDuration)
-	// }
+	if err != nil {
+		_, _ = fmt.Fprintf(ls.logCollector, "INIT_REPORT Init Duration: %.2f ms Phase: init Status: %s", ls.initDuration, err.Error())
+	}
 
-	return ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
+	return err
 }
 
 func (ls *LocalStackService) SendStatus(status LocalStackStatus, payload []byte) error {
 	return ls.adapter.SendStatus(status, payload)
 }
 
-func (ls *LocalStackService) CollectAndSendLogs(invokeId string) error {
+func (ls *LocalStackService) ForwardLogs(invokeId string) error {
 	serializedLogs, err := json.Marshal(ls.logCollector.GetLogs())
 	if err != nil {
 		return err
@@ -132,14 +151,13 @@ func (ls *LocalStackService) SendResponse(invokeId string, payload []byte) error
 func (ls *LocalStackService) InvokeForward(invoke InvokeRequest) ([]byte, error) {
 	proxyResponseWriter := NewResponseWriterProxy()
 
-	// _, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)
+	_, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)
 
 	clientContext, err := base64.StdEncoding.DecodeString(invoke.ClientContext)
 	if err != nil {
 		log.WithError(err).Debug("client context was not valid base64, defaulting to plain-string: %s", clientContext)
 	}
 
-	// start := metering.Monotime()
 	invokePayload := &interop.Invoke{
 		ID:                 invoke.InvokeId,
 		InvokedFunctionArn: invoke.InvokedFunctionArn,
@@ -154,28 +172,28 @@ func (ls *LocalStackService) InvokeForward(invoke InvokeRequest) ([]byte, error)
 		log.WithError(invokeErr).Error("Failed invocation.")
 	}
 
-	// invokeStartTime := invokePayload.InvokeReceivedTime
-	// invokeEndTime := metering.Monotime()
+	invokeStartTime := invokePayload.InvokeReceivedTime
+	invokeEndTime := metering.Monotime()
 
-	// durationMs := float64(invokeEndTime-invokeStartTime) / float64(time.Millisecond)
+	durationMs := float64(invokeEndTime-invokeStartTime) / float64(time.Millisecond)
 
-	// report := InvokeReport{
-	// 	InvokeId:         invoke.InvokeId,
-	// 	DurationMs:       durationMs,
-	// 	BilledDurationMs: math.Ceil(durationMs),
-	// 	MemorySizeMB:     ls.function.FunctionMemorySizeMb,
-	// 	MaxMemoryUsedMB:  ls.function.FunctionMemorySizeMb,
-	// 	InitDurationMs:   ls.initDuration,
-	// }
+	report := InvokeReport{
+		InvokeId:         invoke.InvokeId,
+		DurationMs:       durationMs,
+		BilledDurationMs: math.Ceil(durationMs),
+		MemorySizeMB:     ls.function.FunctionMemorySizeMb,
+		MaxMemoryUsedMB:  ls.function.FunctionMemorySizeMb,
+		InitDurationMs:   ls.initDuration,
+	}
 
-	// switch invokeErr {
-	// case rapidcore.ErrInvokeTimeout:
-	// 	report.Status = "timeout"
-	// }
+	switch invokeErr {
+	case rapidcore.ErrInvokeTimeout:
+		report.Status = "timeout"
+	}
 
-	// if err := report.Print(ls.logCollector); err != nil {
-	// 	log.WithError(err).Error("Failed to write END report.")
-	// }
+	if err := report.Print(ls.logCollector); err != nil {
+		log.WithError(err).Error("Failed to write END report.")
+	}
 
 	return proxyResponseWriter.Body(), invokeErr
 }

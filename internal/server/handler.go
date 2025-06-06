@@ -60,12 +60,10 @@ func InvokeHandler(api *LocalStackService) http.HandlerFunc {
 				log.Fatalln("unable to marshal json timeout response")
 			}
 			response = errorResponseJson
-			// default:
-			// 	log.Fatalln(err)
 		}
 
 		api.AfterInvoke(r.Context())
-		api.CollectAndSendLogs(req.InvokeId)
+		api.ForwardLogs(req.InvokeId)
 
 		invokeRespDecoder := json.NewDecoder(bytes.NewReader(response))
 		invokeRespDecoder.DisallowUnknownFields()

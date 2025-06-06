@@ -14,7 +14,6 @@ import (
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/core/directinvoke"
-	"go.amzn.com/lambda/fatalerror"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/metering"
 	"go.amzn.com/lambda/rapi/model"
@@ -60,13 +59,14 @@ func NewInteropServer(server *rapidcore.Server, ls *LocalStackAdapter) *CustomIn
 	return &CustomInteropServer{
 		Server:            server,
 		localStackAdapter: ls,
+		mutex:             &sync.Mutex{},
 	}
 }
 
 type CustomInteropServer struct {
 	*rapidcore.Server
 	localStackAdapter *LocalStackAdapter
-	initOnce          sync.Once
+	mutex             *sync.Mutex
 }
 
 func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
@@ -77,13 +77,33 @@ func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke 
 	defer close(releaseRespChan)
 
 	go func() {
-		_, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
-		if err != nil && !errors.Is(err, rapidcore.ErrAlreadyReserved) {
+		reserveResp, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
+		if err != nil {
 			releaseRespChan <- err
 			return
 		}
 
-		invoke.DeadlineNs = fmt.Sprintf("%d", metering.Monotime()+c.Server.GetInvokeTimeout().Nanoseconds())
+		invoke.DeadlineNs = fmt.Sprintf("%d", metering.Monotime()+reserveResp.Token.FunctionTimeout.Nanoseconds())
+
+		// Wait for initialization to complete
+		if err := c.Server.AwaitInitialized(); err != nil {
+			switch err {
+			case rapidcore.ErrInitDoneFailed:
+				// Init failed, reset and continue with suppressed init
+				if _, resetErr := c.Server.Reset("InitFailed", 2000); resetErr != nil {
+					log.Errorf("Reset failed: %v", resetErr)
+				}
+				// Reserve again after reset for suppressed init
+				if _, reserveErr := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID); reserveErr != nil {
+					releaseRespChan <- reserveErr
+					return
+				}
+			default:
+				releaseRespChan <- err
+				return
+			}
+		}
+
 		go func() {
 			isDirect := directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize
 			if err := c.Server.FastInvoke(responseWriter, invoke, isDirect); err != nil {
@@ -91,55 +111,44 @@ func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke 
 			}
 		}()
 
-		// Waits for an invocation to finish before calling Release()
 		_, err = c.Server.AwaitRelease()
 		if err != nil {
-			log.Debugf("AwaitRelease() error: %s", err)
 			switch err {
 			case rapidcore.ErrReleaseReservationDone:
-				// not an error, expected return value when Reset is called
+				// Expected when Reset is called
+				releaseRespChan <- nil
 				return
 			case rapidcore.ErrInitDoneFailed, rapidcore.ErrInvokeDoneFailed:
-				c.Server.Reset("ReleaseFail", 2000)
+				if _, resetErr := c.Server.Reset("ReleaseFail", 2000); resetErr != nil {
+					log.Errorf("Reset failed: %v", resetErr)
+				}
+				releaseRespChan <- err
+				return
+			default:
+				if _, resetErr := c.Server.Reset("UnexpectedError", 2000); resetErr != nil {
+					log.Errorf("Reset failed: %v", resetErr)
+				}
+				releaseRespChan <- err
+				return
 			}
 		}
-		releaseRespChan <- err
+
+		releaseRespChan <- nil
 	}()
 
 	select {
 	case err := <-releaseRespChan:
-		if err != nil {
-			return err
-		}
+		return err
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			c.Server.Reset("Timeout", 2000)
+			if _, resetErr := c.Server.Reset("Timeout", 2000); resetErr != nil {
+				log.Errorf("Reset failed: %v", resetErr)
+			}
 			return rapidcore.ErrInvokeTimeout
 		}
 	}
 
-	return c.Server.Release()
-}
-
-func (c *CustomInteropServer) AwaitInitialized() error {
-	err := c.Server.AwaitInitialized()
-	go func() {
-		state, stateErr := c.InternalState()
-		if stateErr != nil {
-			return
-		}
-
-		doneResponse := &interop.Done{}
-		if state.FirstFatalError != "" {
-			doneResponse.ErrorType = fatalerror.GetValidRuntimeOrFunctionErrorType(state.FirstFatalError)
-		}
-
-		c.InitDoneChan <- rapidcore.DoneWithState{
-			Done:  doneResponse,
-			State: c.InternalStateGetter(),
-		}
-	}()
-	return err
+	return nil
 }
 
 func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {

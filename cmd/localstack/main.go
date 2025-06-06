@@ -29,7 +29,6 @@ import (
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	supv "go.amzn.com/lambda/supervisor"
-	"go.amzn.com/lambda/telemetry"
 )
 
 func InitLsOpts() *server.LsOpts {
@@ -197,18 +196,21 @@ func main() {
 	logCollector := logging.NewLogCollector()
 	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
 	tracer := tracing.NewLocalStackTracer()
-	eventsListener := events.NewEventsListener(lsAdapter, &telemetry.NoOpEventsAPI{}, logCollector, functionConf)
+	eventsListener := events.NewEventsListener(lsAdapter)
 
 	defaultSupv := supv.NewLocalSupervisor()
 	wrappedSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener, interopServer.InternalState)
 
 	// build sandbox
+	exitChan := make(chan struct{})
 	sandbox := rapidcore.
 		NewSandboxBuilder().
-		//SetTracer(tracer).
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
+		}).
+		AddShutdownFunc(func() {
+			exitChan <- struct{}{}
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
@@ -216,13 +218,15 @@ func main() {
 		SetTracer(tracer).
 		SetInteropServer(interopServer).
 		SetSupervisor(wrappedSupv).
-		SetEventsAPI(eventsListener)
+		SetHandler(handler)
+	sandbox.AddShutdownFunc(func() {
+		exitChan <- struct{}{}
+	})
 
-	// SetEventsAPI(eventsListener)
+	// Start daemons
 
-	// Externally set supervisor for metrics tracking
-	// sandbox.SetSupervisor(localSupervisor)
-	// sandbox.SetRuntimeFsRootPath(localSupervisor.RootPath)
+	// Start hot-reloading watcher
+	go hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
 
 	// xray daemon
 	endpoint := "http://" + net.JoinHostPort(lsOpts.LocalstackIP, lsOpts.EdgePort)
@@ -234,15 +238,7 @@ func main() {
 		log.Debugln("Flushing segments in xray daemon")
 		d.Close()
 	}()
-	d.Run() // async
-
-	if len(handler) > 0 {
-		sandbox.SetHandler(handler)
-	}
-	exitChan := make(chan struct{})
-	sandbox.AddShutdownFunc(func() {
-		exitChan <- struct{}{}
-	})
+	d.Run() // served async
 
 	// initialize all flows and start runtime API
 	sandboxContext, internalStateFn := sandbox.Create()
@@ -276,12 +272,6 @@ func main() {
 		}
 		go invokeServer.Serve(listener)
 		log.Debugf("LocalStack API gateway listening on %s", listener.Addr().String())
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
 	}()
 
 	wg.Wait()

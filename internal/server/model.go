@@ -61,6 +61,7 @@ type ErrorResponse struct {
 	ErrorType    string   `json:"errorType,omitempty"`
 	RequestId    *string  `json:"requestId,omitempty"`
 	StackTrace   []string `json:"stackTrace,omitempty"`
+	Trace        []string `json:"trace,omitempty"`
 }
 
 type ResponseWriterProxy struct {
