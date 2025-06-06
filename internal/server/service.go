@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	"github.com/localstack/lambda-runtime-init/internal/logging"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
@@ -24,14 +26,14 @@ type LocalStackService struct {
 	shutdownCh chan struct{}
 
 	sandbox *CustomInteropServer
-	adapter *LocalStackAdapter
+	adapter *localstack.LocalStackClient
 
 	logCollector *logging.LogCollector
 
 	xrayEndpoint string // TODO replace with tracing config
 
-	runtime  *LsOpts
-	function FunctionConfig
+	runtime  *localstack.Config
+	function lambda.FunctionConfig
 	aws      config.EnvConfig
 
 	initDuration float64
@@ -40,10 +42,10 @@ type LocalStackService struct {
 func NewLocalStackService(
 	sandbox *CustomInteropServer,
 	logCollector *logging.LogCollector,
-	adapter *LocalStackAdapter,
+	adapter *localstack.LocalStackClient,
 	xrayEndpoint string,
-	runtime *LsOpts,
-	fnConf FunctionConfig,
+	runtime *localstack.Config,
+	fnConf lambda.FunctionConfig,
 	awsConf config.EnvConfig,
 ) *LocalStackService {
 	return &LocalStackService{
@@ -128,16 +130,16 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 	return err
 }
 
-func (ls *LocalStackService) SendStatus(status LocalStackStatus, payload []byte) error {
-	return ls.adapter.SendStatus(status, payload)
-}
-
 func (ls *LocalStackService) ForwardLogs(invokeId string) error {
 	serializedLogs, err := json.Marshal(ls.logCollector.GetLogs())
 	if err != nil {
 		return err
 	}
 	return ls.adapter.SendInvocation(invokeId, "/logs", serializedLogs)
+}
+
+func (ls *LocalStackService) SendStatus(status localstack.LocalStackStatus, payload []byte) error {
+	return ls.adapter.SendStatus(status, payload)
 }
 
 func (ls *LocalStackService) SendError(invokeId string, payload []byte) error {
@@ -148,7 +150,7 @@ func (ls *LocalStackService) SendResponse(invokeId string, payload []byte) error
 	return ls.adapter.SendInvocation(invokeId, "/response", payload)
 }
 
-func (ls *LocalStackService) InvokeForward(invoke InvokeRequest) ([]byte, error) {
+func (ls *LocalStackService) InvokeForward(invoke localstack.InvokeRequest) ([]byte, error) {
 	proxyResponseWriter := NewResponseWriterProxy()
 
 	_, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)

@@ -14,10 +14,12 @@ import (
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
 	"github.com/localstack/lambda-runtime-init/internal/aws/xray"
 	"github.com/localstack/lambda-runtime-init/internal/bootstrap"
 	"github.com/localstack/lambda-runtime-init/internal/events"
 	"github.com/localstack/lambda-runtime-init/internal/hotreloading"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	"github.com/localstack/lambda-runtime-init/internal/logging"
 	"github.com/localstack/lambda-runtime-init/internal/server"
 
@@ -31,8 +33,8 @@ import (
 	supv "go.amzn.com/lambda/supervisor"
 )
 
-func InitLsOpts() *server.LsOpts {
-	return &server.LsOpts{
+func InitLsOpts() *localstack.Config {
+	return &localstack.Config{
 		// required
 		RuntimeEndpoint: utils.MustGetEnv("LOCALSTACK_RUNTIME_ENDPOINT"),
 		RuntimeId:       utils.MustGetEnv("LOCALSTACK_RUNTIME_ID"),
@@ -55,8 +57,8 @@ func InitLsOpts() *server.LsOpts {
 	}
 }
 
-func InitFunctionConfig() server.FunctionConfig {
-	return server.FunctionConfig{
+func InitFunctionConfig() lambda.FunctionConfig {
+	return lambda.FunctionConfig{
 		FunctionName:         utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
 		FunctionVersion:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST"),
 		FunctionTimeoutSec:   utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_TIMEOUT", "30"),
@@ -189,14 +191,14 @@ func main() {
 
 	// Custom Interop Server
 	defaultServer := rapidcore.NewServer()
-	lsAdapter := server.NewLocalStackAdapter(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
-	interopServer := server.NewInteropServer(defaultServer, lsAdapter)
+	lsClient := localstack.NewLocalStackClient(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
+	interopServer := server.NewInteropServer(defaultServer, lsClient)
 
 	// Services required for Sandbox environment
 	logCollector := logging.NewLogCollector()
 	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
 	tracer := tracing.NewLocalStackTracer()
-	eventsListener := events.NewEventsListener(lsAdapter)
+	eventsListener := events.NewLocalStackEventsAPI(lsClient)
 
 	defaultSupv := supv.NewLocalSupervisor()
 	wrappedSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener, interopServer.InternalState)
@@ -246,7 +248,7 @@ func main() {
 	interopServer.SetSandboxContext(sandboxContext)
 	interopServer.SetInternalStateGetter(internalStateFn)
 
-	localStackService := server.NewLocalStackService(interopServer, logCollector, lsAdapter, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
+	localStackService := server.NewLocalStackService(interopServer, logCollector, lsClient, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
@@ -285,7 +287,7 @@ func main() {
 		// return
 	} else {
 		log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
-		if err := localStackService.SendStatus(server.Ready, []byte{}); err != nil {
+		if err := localStackService.SendStatus(localstack.Ready, []byte{}); err != nil {
 			log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
 		}
 	}

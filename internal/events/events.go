@@ -4,28 +4,31 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/localstack/lambda-runtime-init/internal/server"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
 
 	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/telemetry"
+	"go.amzn.com/lambda/rapidcore/standalone/telemetry"
 )
 
-type EventsListener struct {
+// LocalStackEventsAPI handles internally emitted rapid events.
+// TODO: Logs should all be collected here
+type LocalStackEventsAPI struct {
 	interop.EventsAPI
-	adapter *server.LocalStackAdapter
+	adapter *localstack.LocalStackClient
 }
 
-func NewEventsListener(adapter *server.LocalStackAdapter) *EventsListener {
-	return &EventsListener{
-		adapter: adapter,
-		// For now just use the no-ops API to satisfy the EventsAPI interface
-		EventsAPI: &telemetry.NoOpEventsAPI{},
+func NewLocalStackEventsAPI(adapter *localstack.LocalStackClient) *LocalStackEventsAPI {
+	return &LocalStackEventsAPI{
+		adapter:   adapter,
+		EventsAPI: new(telemetry.StandaloneEventsAPI),
 	}
-
 }
 
-func (ev *EventsListener) SendFault(data interop.FaultData) error {
-	resp := server.ErrorResponse{
+func (ev *LocalStackEventsAPI) SendFault(data interop.FaultData) error {
+	// We can ignore whatever errors are returned here
+	_ = ev.EventsAPI.SendFault(data)
+
+	resp := localstack.ErrorResponse{
 		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", data.RequestID, data.ErrorMessage),
 		ErrorType:    string(data.ErrorType),
 	}
@@ -35,5 +38,5 @@ func (ev *EventsListener) SendFault(data interop.FaultData) error {
 		return err
 	}
 
-	return ev.adapter.SendStatus(server.Error, payload)
+	return ev.adapter.SendStatus(localstack.Error, payload)
 }

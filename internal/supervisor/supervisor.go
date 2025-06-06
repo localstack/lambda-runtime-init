@@ -13,8 +13,9 @@ import (
 	"go.amzn.com/lambda/supervisor/model"
 )
 
-// Wraps a ProcessSupervisor
-
+// LocalStackSupervisor wraps a pre-existing ProcessSupervisor and intercepts all emitted Events.
+// This allows us to observe and customize the handling of a process' lifecycle.
+// Currently, this is used to extract information about the exit codes of a process in the event of a SIGKILL.
 type LocalStackSupervisor struct {
 	model.ProcessSupervisor
 	eventsChan chan model.Event

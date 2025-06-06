@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/go-chi/chi"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/fatalerror"
 	"go.amzn.com/lambda/rapidcore"
@@ -35,7 +36,7 @@ func InvokeHandler(api *LocalStackService) http.HandlerFunc {
 
 		// TODO: We shouldn't be using a custom request body here,
 		// instead we should be forwarding the entire boto3/AWS request
-		var req InvokeRequest
+		var req localstack.InvokeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.WithError(err).Error("Failed to decode invoke request")
 		}
@@ -46,7 +47,7 @@ func InvokeHandler(api *LocalStackService) http.HandlerFunc {
 		// we can actually just continue here, error message is sent below
 		case errors.Is(err, rapidcore.ErrInvokeTimeout):
 			log.Debugf("Got invoke timeout")
-			errorResponse := ErrorResponse{
+			errorResponse := localstack.ErrorResponse{
 				ErrorMessage: fmt.Sprintf(
 					"RequestId: %s Error: Task timed out after %s.00 seconds",
 					req.InvokeId,
@@ -70,7 +71,7 @@ func InvokeHandler(api *LocalStackService) http.HandlerFunc {
 
 		// If the response cannot be decoded into an ErrorResponse type,
 		// we assume no error is present.
-		var errorResponse ErrorResponse
+		var errorResponse localstack.ErrorResponse
 		if err := invokeRespDecoder.Decode(&errorResponse); err != nil || reflect.ValueOf(errorResponse).IsZero() {
 			api.SendResponse(req.InvokeId, response)
 			return
