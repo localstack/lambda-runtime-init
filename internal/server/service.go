@@ -66,7 +66,9 @@ func NewLocalStackService(
 		aws:      awsConf,
 		runtime:  runtime,
 
-		allDone: make(chan struct{}, 1),
+		allDone:          make(chan struct{}, 1),
+		isShuttingDown:   &atomic.Bool{},
+		pendingCallbacks: 0,
 	}
 }
 
