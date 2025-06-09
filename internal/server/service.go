@@ -9,12 +9,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
 	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	"github.com/localstack/lambda-runtime-init/internal/logging"
+	"github.com/localstack/lambda-runtime-init/internal/supervisor"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/metering"
@@ -23,10 +25,9 @@ import (
 )
 
 type LocalStackService struct {
-	shutdownCh chan struct{}
-
-	sandbox *CustomInteropServer
+	sandbox *LocalStackInteropsServer
 	adapter *localstack.LocalStackClient
+	supv    *supervisor.LocalStackSupervisor
 
 	logCollector *logging.LogCollector
 
@@ -37,12 +38,17 @@ type LocalStackService struct {
 	aws      config.EnvConfig
 
 	initDuration float64
+
+	pendingCallbacks int64
+	isShuttingDown   *atomic.Bool
+	allDone          chan struct{}
 }
 
 func NewLocalStackService(
-	sandbox *CustomInteropServer,
+	sandbox *LocalStackInteropsServer,
 	logCollector *logging.LogCollector,
 	adapter *localstack.LocalStackClient,
+	supv *supervisor.LocalStackSupervisor,
 	xrayEndpoint string,
 	runtime *localstack.Config,
 	fnConf lambda.FunctionConfig,
@@ -52,6 +58,7 @@ func NewLocalStackService(
 		sandbox:      sandbox,
 		adapter:      adapter,
 		logCollector: logCollector,
+		supv:         supv,
 
 		xrayEndpoint: xrayEndpoint,
 
@@ -59,7 +66,7 @@ func NewLocalStackService(
 		aws:      awsConf,
 		runtime:  runtime,
 
-		shutdownCh: make(chan struct{}, 1),
+		allDone: make(chan struct{}, 1),
 	}
 }
 
@@ -131,6 +138,16 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 }
 
 func (ls *LocalStackService) ForwardLogs(invokeId string) error {
+	if ls.isShuttingDown.Load() {
+		if atomic.LoadInt64(&ls.pendingCallbacks) == 0 {
+			close(ls.allDone)
+		}
+		return nil
+	}
+
+	atomic.AddInt64(&ls.pendingCallbacks, 1)
+	defer atomic.AddInt64(&ls.pendingCallbacks, -1)
+
 	serializedLogs, err := json.Marshal(ls.logCollector.GetLogs())
 	if err != nil {
 		return err
@@ -139,18 +156,41 @@ func (ls *LocalStackService) ForwardLogs(invokeId string) error {
 }
 
 func (ls *LocalStackService) SendStatus(status localstack.LocalStackStatus, payload []byte) error {
+	if ls.isShuttingDown.Load() {
+		if atomic.LoadInt64(&ls.pendingCallbacks) == 0 {
+			close(ls.allDone)
+		}
+		return nil
+	}
+
+	atomic.AddInt64(&ls.pendingCallbacks, 1)
+	defer atomic.AddInt64(&ls.pendingCallbacks, -1)
+
 	return ls.adapter.SendStatus(status, payload)
 }
 
 func (ls *LocalStackService) SendError(invokeId string, payload []byte) error {
+	if ls.isShuttingDown.Load() {
+		if atomic.LoadInt64(&ls.pendingCallbacks) == 0 {
+			close(ls.allDone)
+		}
+		return nil
+	}
+
+	atomic.AddInt64(&ls.pendingCallbacks, 1)
+	defer atomic.AddInt64(&ls.pendingCallbacks, -1)
+
 	return ls.adapter.SendInvocation(invokeId, "/error", payload)
 }
 
 func (ls *LocalStackService) SendResponse(invokeId string, payload []byte) error {
+	atomic.AddInt64(&ls.pendingCallbacks, 1)
+	defer atomic.AddInt64(&ls.pendingCallbacks, -1)
+
 	return ls.adapter.SendInvocation(invokeId, "/response", payload)
 }
 
-func (ls *LocalStackService) InvokeForward(invoke localstack.InvokeRequest) ([]byte, error) {
+func (ls *LocalStackService) InvokeForward(ctx context.Context, invoke localstack.InvokeRequest) ([]byte, error) {
 	proxyResponseWriter := NewResponseWriterProxy()
 
 	_, _ = fmt.Fprintf(ls.logCollector, "START RequestId: %s Version: %s\n", invoke.InvokeId, ls.function.FunctionVersion)
@@ -169,8 +209,8 @@ func (ls *LocalStackService) InvokeForward(invoke localstack.InvokeRequest) ([]b
 		NeedDebugLogs:      true,
 	}
 
-	var invokeErr error
-	if invokeErr = ls.sandbox.Invoke(proxyResponseWriter, invokePayload); invokeErr != nil {
+	invokeErr := ls.sandbox.Execute(ctx, proxyResponseWriter, invokePayload)
+	if invokeErr != nil {
 		log.WithError(invokeErr).Error("Failed invocation.")
 	}
 
@@ -209,8 +249,6 @@ func (ls *LocalStackService) AfterInvoke(ctx context.Context) error {
 		}
 		select {
 		case <-time.After(time.Duration(waitMS) * time.Millisecond):
-		case <-ls.shutdownCh:
-			log.Debug("Post invocation delay cancelled because shutdown was triggered.")
 		case <-ctx.Done():
 			log.Debug("Post invocation delay cancelled because request was cancelled.")
 		}
@@ -220,6 +258,28 @@ func (ls *LocalStackService) AfterInvoke(ctx context.Context) error {
 }
 
 func (ls *LocalStackService) Close() {
+	ls.isShuttingDown.Store(true)
 	log.Debug("Shutdown of LocalStackService triggered.")
-	close(ls.shutdownCh)
+}
+
+func (ls *LocalStackService) shutdownTriggered() bool {
+	return ls.isShuttingDown.Load()
+}
+
+func (ls *LocalStackService) AwaitCompleted(ctx context.Context) error {
+	if !ls.isShuttingDown.Load() {
+		return fmt.Errorf("Shutdown has not been triggered.")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			pending := atomic.LoadInt64(&ls.pendingCallbacks)
+			return fmt.Errorf("failed to gracefully complete all callbacks to LocalStack: %d remaining", pending)
+		case <-ls.allDone:
+			if atomic.LoadInt64(&ls.pendingCallbacks) == 0 {
+				return nil
+			}
+		}
+	}
 }

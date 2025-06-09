@@ -3,14 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/core/directinvoke"
+	"go.amzn.com/lambda/core/statejson"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/metering"
 	"go.amzn.com/lambda/rapi/model"
@@ -18,48 +19,52 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type CustomInteropServer struct {
+type LocalStackInteropsServer struct {
 	*rapidcore.Server
 	localStackAdapter *localstack.LocalStackClient
-	mutex             *sync.Mutex
 }
 
-func NewInteropServer(server *rapidcore.Server, ls *localstack.LocalStackClient) *CustomInteropServer {
-	return &CustomInteropServer{
+func NewInteropServer(server *rapidcore.Server, ls *localstack.LocalStackClient) *LocalStackInteropsServer {
+	return &LocalStackInteropsServer{
 		Server:            server,
 		localStackAdapter: ls,
-		mutex:             &sync.Mutex{},
 	}
 }
 
-func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+func (c *LocalStackInteropsServer) Execute(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.Server.GetInvokeTimeout())
 	defer cancel()
 
-	if err := c.reserveForInvoke(ctx, invoke); err != nil {
+	if err := c.reserve(ctx, invoke); err != nil {
 		return err
 	}
 
-	return c.executeInvoke(ctx, responseWriter, invoke)
+	if err := c.executeInvoke(ctx, responseWriter, invoke); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (c *CustomInteropServer) executeInvoke(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+func (c *LocalStackInteropsServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+	return c.Execute(context.Background(), responseWriter, invoke)
+}
+
+func (c *LocalStackInteropsServer) executeInvoke(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		isDirect := directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize
-		if err := c.Server.FastInvoke(responseWriter, invoke, isDirect); err != nil {
-			log.Debugf("FastInvoke() error: %s", err)
+		err := c.Server.FastInvoke(responseWriter, invoke, isDirect)
+		if err != nil {
+			log.WithError(err).Debug("FastInvoke() failed")
 		}
-		return nil
+		return err
 	})
 
 	g.Go(func() error {
-		_, err := c.Server.AwaitRelease()
-		if err != nil {
-			return c.handleReleaseError(err)
-		}
-		return nil
+		_, err := c.AwaitRelease()
+		return err
 	})
 
 	done := make(chan error, 1)
@@ -71,11 +76,17 @@ func (c *CustomInteropServer) executeInvoke(ctx context.Context, responseWriter 
 	case err := <-done:
 		return err
 	case <-gCtx.Done():
-		return c.handleTimeout()
+		if errors.Is(gCtx.Err(), context.DeadlineExceeded) {
+			if _, resetErr := c.Server.Reset("Timeout", 2000); resetErr != nil {
+				log.WithError(resetErr).Errorf("Reset failed")
+			}
+			return rapidcore.ErrInvokeTimeout
+		}
+		return nil
 	}
 }
 
-func (c *CustomInteropServer) reserveForInvoke(ctx context.Context, invoke *interop.Invoke) error {
+func (c *LocalStackInteropsServer) reserve(ctx context.Context, invoke *interop.Invoke) error {
 	reserveResp, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
 	if err != nil {
 		return err
@@ -89,12 +100,18 @@ func (c *CustomInteropServer) reserveForInvoke(ctx context.Context, invoke *inte
 		switch err {
 		case rapidcore.ErrInitDoneFailed:
 			if _, resetErr := c.Server.Reset("InitFailed", 2000); resetErr != nil {
-				log.Errorf("Reset failed: %v", resetErr)
+				log.WithError(resetErr).Debug("Reset failed")
 			}
 
-			if _, reserveErr := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID); reserveErr != nil {
-				return reserveErr
+			if _, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID); err != nil {
+				return err
 			}
+
+			// If the original INIT failed, let's do another wait since we've triggered a RESERVE
+			if err := c.Server.AwaitInitialized(); err != nil {
+				return err
+			}
+
 			return nil
 		default:
 			return err
@@ -104,31 +121,25 @@ func (c *CustomInteropServer) reserveForInvoke(ctx context.Context, invoke *inte
 	return nil
 }
 
-func (c *CustomInteropServer) handleReleaseError(err error) error {
+func (c *LocalStackInteropsServer) AwaitRelease() (*statejson.ReleaseResponse, error) {
+	resp, err := c.Server.AwaitRelease()
 	switch err {
-	case rapidcore.ErrReleaseReservationDone:
-		return nil
+	case rapidcore.ErrReleaseReservationDone, nil:
+		return resp, nil
 	case rapidcore.ErrInitDoneFailed, rapidcore.ErrInvokeDoneFailed:
 		if _, resetErr := c.Server.Reset("ReleaseFail", 2000); resetErr != nil {
 			log.Errorf("Reset failed: %v", resetErr)
 		}
-		return err
+		return nil, err
 	default:
 		if _, resetErr := c.Server.Reset("UnexpectedError", 2000); resetErr != nil {
 			log.Errorf("Reset failed: %v", resetErr)
 		}
-		return err
+		return nil, err
 	}
 }
 
-func (c *CustomInteropServer) handleTimeout() error {
-	if _, resetErr := c.Server.Reset("Timeout", 2000); resetErr != nil {
-		log.Errorf("Reset failed: %v", resetErr)
-	}
-	return rapidcore.ErrInvokeTimeout
-}
-
-func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
+func (c *LocalStackInteropsServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	errResp := &model.ErrorResponse{}
 	err := json.Unmarshal(resp.Payload, errResp)
 	if err != nil {

@@ -41,10 +41,8 @@ func InvokeHandler(api *LocalStackService) http.HandlerFunc {
 			log.WithError(err).Error("Failed to decode invoke request")
 		}
 
-		response, err := api.InvokeForward(req)
+		response, err := api.InvokeForward(r.Context(), req)
 		switch {
-		// case errors.Is(err, rapidcore.ErrInvokeDoneFailed) || err == nil:
-		// we can actually just continue here, error message is sent below
 		case errors.Is(err, rapidcore.ErrInvokeTimeout):
 			log.Debugf("Got invoke timeout")
 			errorResponse := localstack.ErrorResponse{

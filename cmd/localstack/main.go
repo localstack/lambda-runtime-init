@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
@@ -201,7 +202,7 @@ func main() {
 	eventsListener := events.NewLocalStackEventsAPI(lsClient)
 
 	defaultSupv := supv.NewLocalSupervisor()
-	wrappedSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener, interopServer.InternalState)
+	localStackSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener)
 
 	// build sandbox
 	exitChan := make(chan struct{})
@@ -219,11 +220,8 @@ func main() {
 		SetLogsEgressAPI(localStackLogsEgressApi).
 		SetTracer(tracer).
 		SetInteropServer(interopServer).
-		SetSupervisor(wrappedSupv).
+		SetSupervisor(localStackSupv).
 		SetHandler(handler)
-	sandbox.AddShutdownFunc(func() {
-		exitChan <- struct{}{}
-	})
 
 	// Start daemons
 
@@ -248,7 +246,9 @@ func main() {
 	interopServer.SetSandboxContext(sandboxContext)
 	interopServer.SetInternalStateGetter(internalStateFn)
 
-	localStackService := server.NewLocalStackService(interopServer, logCollector, lsClient, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf)
+	localStackService := server.NewLocalStackService(
+		interopServer, logCollector, lsClient, localStackSupv, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf,
+	)
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
@@ -295,6 +295,13 @@ func main() {
 	select {
 	case <-ctx.Done():
 	case <-exitChan:
+	}
+
+	gracefulCtx, cancel := context.WithTimeout(ctx, time.Millisecond*500)
+	defer cancel()
+
+	if err := localStackService.AwaitCompleted(gracefulCtx); err != nil {
+		log.Warnf("Did not gracefully complete: %w", err)
 	}
 
 }
