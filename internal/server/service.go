@@ -259,9 +259,10 @@ func (ls *LocalStackService) AfterInvoke(ctx context.Context) error {
 	return nil
 }
 
-func (ls *LocalStackService) Close() {
+func (ls *LocalStackService) Close() error {
 	ls.isShuttingDown.Store(true)
 	log.Debug("Shutdown of LocalStackService triggered.")
+	return nil
 }
 
 func (ls *LocalStackService) shutdownTriggered() bool {
@@ -277,7 +278,10 @@ func (ls *LocalStackService) AwaitCompleted(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			pending := atomic.LoadInt64(&ls.pendingCallbacks)
-			return fmt.Errorf("failed to gracefully complete all callbacks to LocalStack: %d remaining", pending)
+			if pending > 0 {
+				return fmt.Errorf("failed to gracefully complete all callbacks to LocalStack: %d remaining", pending)
+			}
+			return nil
 		case <-ls.allDone:
 			if atomic.LoadInt64(&ls.pendingCallbacks) == 0 {
 				return nil

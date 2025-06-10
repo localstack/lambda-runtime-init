@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/fatalerror"
 	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/supervisor"
 	"go.amzn.com/lambda/supervisor/model"
 )
 
@@ -24,10 +25,10 @@ type LocalStackSupervisor struct {
 	isShuttingDown *atomic.Bool
 }
 
-func NewLocalStackSupervisor(ctx context.Context, supv model.ProcessSupervisor, evs interop.EventsAPI) *LocalStackSupervisor {
+func NewLocalStackSupervisor(ctx context.Context, evs interop.EventsAPI) *LocalStackSupervisor {
 	var isShuttingDown atomic.Bool
 	ls := &LocalStackSupervisor{
-		ProcessSupervisor: supv,
+		ProcessSupervisor: supervisor.NewLocalSupervisor(),
 		eventsAPI:         evs,
 		eventsChan:        make(chan model.Event),
 		isShuttingDown:    &isShuttingDown,

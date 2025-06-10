@@ -12,6 +12,7 @@ type Resetter interface {
 	Reset(reason string, timeoutMs int64) (*statejson.ResetDescription, error)
 }
 
+// TODO: Rework this into a struct/service where the ChangeListener is passed via dependency injection
 func RunHotReloadingListener(server Resetter, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
 	if len(targetPaths) == 1 && targetPaths[0] == "" {
 		log.Debugln("Hot reloading disabled.")
@@ -31,5 +32,4 @@ func RunHotReloadingListener(server Resetter, targetPaths []string, ctx context.
 
 	<-ctx.Done()
 	log.Infoln("Closing down filewatcher.")
-
 }

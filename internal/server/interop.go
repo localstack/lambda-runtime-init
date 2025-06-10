@@ -24,9 +24,9 @@ type LocalStackInteropsServer struct {
 	localStackAdapter *localstack.LocalStackClient
 }
 
-func NewInteropServer(server *rapidcore.Server, ls *localstack.LocalStackClient) *LocalStackInteropsServer {
+func NewInteropServer(ls *localstack.LocalStackClient) *LocalStackInteropsServer {
 	return &LocalStackInteropsServer{
-		Server:            server,
+		Server:            rapidcore.NewServer(),
 		localStackAdapter: ls,
 	}
 }
@@ -165,4 +165,10 @@ func (c *LocalStackInteropsServer) SendInitErrorResponse(resp *interop.ErrorInvo
 	}()
 
 	return c.Server.SendInitErrorResponse(resp)
+}
+
+func (c *LocalStackInteropsServer) Close() error {
+	log.Info("Shutting down...")
+	_, err := c.Reset("SandboxTerminated", 2000)
+	return err
 }

@@ -11,8 +11,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
+	"syscall"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
@@ -22,6 +21,7 @@ import (
 	"github.com/localstack/lambda-runtime-init/internal/hotreloading"
 	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	"github.com/localstack/lambda-runtime-init/internal/logging"
+	"github.com/localstack/lambda-runtime-init/internal/sandbox"
 	"github.com/localstack/lambda-runtime-init/internal/server"
 
 	"github.com/localstack/lambda-runtime-init/internal/supervisor"
@@ -29,9 +29,9 @@ import (
 	"github.com/localstack/lambda-runtime-init/internal/utils"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/core/directinvoke"
+	"go.amzn.com/lambda/extensions"
 	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/rapidcore"
-	supv "go.amzn.com/lambda/supervisor"
+	"go.amzn.com/lambda/rapid"
 )
 
 func InitLsOpts() *localstack.Config {
@@ -66,7 +66,7 @@ func InitFunctionConfig() lambda.FunctionConfig {
 		InitializationType:   utils.GetEnvWithDefault("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand"),
 		LogGroupName:         utils.GetEnvWithDefault("AWS_LAMBDA_LOG_GROUP_NAME", "/aws/lambda/Functions"),
 		LogStreamName:        utils.GetEnvWithDefault("AWS_LAMBDA_LOG_STREAM_NAME", "$LATEST"),
-		FunctionMemorySizeMb: utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "3008"),
+		FunctionMemorySizeMb: utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "128"),
 		FunctionHandler:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
 	}
 }
@@ -101,6 +101,10 @@ func UnsetLsEnvs() {
 	}
 }
 
+type closer struct{ fn func() }
+
+func (c *closer) Close() error { c.fn(); return nil }
+
 func main() {
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
@@ -116,31 +120,19 @@ func main() {
 	// set up logging following the Logrus logging levels: https://github.com/sirupsen/logrus#level-logging
 	log.SetReportCaller(true)
 	// https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html
-	xRayLogLevel := "info"
-	switch lsOpts.InitLogLevel {
-	case "trace":
-		log.SetFormatter(&log.JSONFormatter{})
-		log.SetLevel(log.TraceLevel)
-		xRayLogLevel = "debug"
-	case "debug":
-		log.SetLevel(log.DebugLevel)
-		xRayLogLevel = "debug"
-	case "info":
-		log.SetLevel(log.InfoLevel)
-	case "warn":
-		log.SetLevel(log.WarnLevel)
-		xRayLogLevel = "warn"
-	case "error":
-		log.SetLevel(log.ErrorLevel)
-		xRayLogLevel = "error"
-	case "fatal":
-		log.SetLevel(log.FatalLevel)
-		xRayLogLevel = "error"
-	case "panic":
-		log.SetLevel(log.PanicLevel)
-		xRayLogLevel = "error"
-	default:
+
+	logLevel, err := log.ParseLevel(lsOpts.InitLogLevel)
+	if err != nil {
 		log.Fatal("Invalid value for LOCALSTACK_INIT_LOG_LEVEL")
+	}
+	log.SetLevel(logLevel)
+
+	xRayLogLevel := lsOpts.InitLogLevel
+	switch logLevel {
+	case log.TraceLevel:
+		log.SetFormatter(&log.JSONFormatter{})
+	case log.ErrorLevel, log.FatalLevel, log.PanicLevel:
+		xRayLogLevel = "error"
 	}
 
 	// patch MaxPayloadSize
@@ -183,52 +175,62 @@ func main() {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// LocalStack client used for sending callbacks
+	lsClient := localstack.NewLocalStackClient(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
+
+	// Services required for Sandbox environment
+	interopServer := server.NewInteropServer(lsClient)
+	defer interopServer.Close()
+
+	logCollector := logging.NewLogCollector()
+	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
+	tracer := tracing.NewLocalStackTracer()
+	lsEventsAPI := events.NewLocalStackEventsAPI(lsClient)
+	localStackSupv := supervisor.NewLocalStackSupervisor(ctx, lsEventsAPI)
+
+	// build sandbox
+	sandboxConfig := rapid.Sandbox{
+		EnableTelemetryAPI: false,
+		StandaloneMode:     true,
+		InitCachingEnabled: true,
+
+		Tracer:        tracer,
+		EventsAPI:     lsEventsAPI,
+		Supervisor:    localStackSupv,
+		InteropServer: interopServer,
+		LogsEgressAPI: localStackLogsEgressApi,
+
+		Handler: handler,
+
+		RuntimeFsRootPath: "/",
+		RuntimeAPIHost:    "127.0.0.1",
+		RuntimeAPIPort:    9001,
+	}
+
+	extensions.Enable()
+
+	rapidCtx, internalStateFn, addr := rapid.Start(ctx, &sandboxConfig)
+	sandboxCtx, err := sandbox.CreateSandboxContext(rapidCtx, handler, addr)
+	if err != nil {
+		log.Fatalf("fatal error encountered when creating SandboxContext: %w", err)
+	}
+
+	// Populate our interop server
+	interopServer.SetSandboxContext(sandboxCtx)
+	interopServer.SetInternalStateGetter(internalStateFn)
+
+	// Start daemons
 
 	// file watcher for hot-reloading
 	fileWatcherContext, cancelFileWatcher := context.WithCancel(ctx)
 	defer cancelFileWatcher()
 
-	// Custom Interop Server
-	defaultServer := rapidcore.NewServer()
-	lsClient := localstack.NewLocalStackClient(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
-	interopServer := server.NewInteropServer(defaultServer, lsClient)
-
-	// Services required for Sandbox environment
-	logCollector := logging.NewLogCollector()
-	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
-	tracer := tracing.NewLocalStackTracer()
-	eventsListener := events.NewLocalStackEventsAPI(lsClient)
-
-	defaultSupv := supv.NewLocalSupervisor()
-	localStackSupv := supervisor.NewLocalStackSupervisor(ctx, defaultSupv, eventsListener)
-
-	// build sandbox
-	exitChan := make(chan struct{})
-	sandbox := rapidcore.
-		NewSandboxBuilder().
-		AddShutdownFunc(func() {
-			log.Debugln("Stopping file watcher")
-			cancelFileWatcher()
-		}).
-		AddShutdownFunc(func() {
-			exitChan <- struct{}{}
-		}).
-		SetExtensionsFlag(true).
-		SetInitCachingFlag(true).
-		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer).
-		SetInteropServer(interopServer).
-		SetSupervisor(localStackSupv).
-		SetHandler(handler)
-
-	// Start daemons
-
-	// Start hot-reloading watcher
 	go hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
 
-	// xray daemon
+	// Start xray daemon
 	endpoint := "http://" + net.JoinHostPort(lsOpts.LocalstackIP, lsOpts.EdgePort)
 	xrayConfig := xray.NewConfig(endpoint, xRayLogLevel)
 	d := xray.NewDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
@@ -240,15 +242,11 @@ func main() {
 	}()
 	d.Run() // served async
 
-	// initialize all flows and start runtime API
-	sandboxContext, internalStateFn := sandbox.Create()
-	// Populate our interop server
-	interopServer.SetSandboxContext(sandboxContext)
-	interopServer.SetInternalStateGetter(internalStateFn)
-
+	// Create the LocalStack service
 	localStackService := server.NewLocalStackService(
 		interopServer, logCollector, lsClient, localStackSupv, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf,
 	)
+	defer localStackService.Close()
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
@@ -258,25 +256,17 @@ func main() {
 	}
 
 	invokeServer := server.NewServer(lsOpts.InteropPort, localStackService)
-	invokeServer.RegisterOnShutdown(localStackService.Close)
+	defer invokeServer.Close()
 
-	defer invokeServer.Shutdown(context.Background())
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
+	serverErr := make(chan error, 1)
 	go func() {
-		defer wg.Done()
 		listener, err := net.Listen("tcp", fmt.Sprintf(":%s", lsOpts.InteropPort))
-
 		if err != nil {
-			log.Fatalf("failed to start listener for custom interops server: %s", err)
+			log.Fatalf("failed to start LocalStack Lambda Runtime Interface server: %s", err)
 		}
-		go invokeServer.Serve(listener)
+		go func() { serverErr <- invokeServer.Serve(listener); close(serverErr) }()
 		log.Debugf("LocalStack API gateway listening on %s", listener.Addr().String())
 	}()
-
-	wg.Wait()
 
 	log.Debugln("Awaiting initialization of runtime init.")
 	if err := interopServer.AwaitInitialized(); err != nil {
@@ -292,16 +282,13 @@ func main() {
 		}
 	}
 
+	// Block until context is cancelled OR the server errors out
 	select {
 	case <-ctx.Done():
-	case <-exitChan:
+		log.Info("Shutdown signal received.")
+	case <-serverErr:
+		if err != nil {
+			log.Errorf("Server error: %v", err)
+		}
 	}
-
-	gracefulCtx, cancel := context.WithTimeout(ctx, time.Millisecond*500)
-	defer cancel()
-
-	if err := localStackService.AwaitCompleted(gracefulCtx); err != nil {
-		log.Warnf("Did not gracefully complete: %w", err)
-	}
-
 }
