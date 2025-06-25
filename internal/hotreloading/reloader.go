@@ -5,10 +5,15 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/rapidcore/standalone"
+	"go.amzn.com/lambda/core/statejson"
 )
 
-func RunHotReloadingListener(server standalone.InteropServer, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
+type Resetter interface {
+	Reset(reason string, timeoutMs int64) (*statejson.ResetDescription, error)
+}
+
+// TODO: Rework this into a struct/service where the ChangeListener is passed via dependency injection
+func RunHotReloadingListener(server Resetter, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
 	if len(targetPaths) == 1 && targetPaths[0] == "" {
 		log.Debugln("Hot reloading disabled.")
 		return
@@ -23,9 +28,8 @@ func RunHotReloadingListener(server standalone.InteropServer, targetPaths []stri
 	defer changeListener.Close()
 	go changeListener.Start()
 	changeListener.AddTargetPaths(targetPaths)
-	go ResetListener(changeListener.debouncedChannel, server)
+	go resetListener(changeListener.debouncedChannel, server)
 
 	<-ctx.Done()
 	log.Infoln("Closing down filewatcher.")
-
 }

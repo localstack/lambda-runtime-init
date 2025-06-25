@@ -10,39 +10,27 @@ type LogResponse struct {
 }
 
 type LogCollector struct {
-	mutex       *sync.Mutex
-	RuntimeLogs []string
-}
-
-func (lc *LogCollector) Write(p []byte) (n int, err error) {
-	lc.Put(string(p))
-	return len(p), nil
+	logs strings.Builder
+	mu   *sync.Mutex
 }
 
 func NewLogCollector() *LogCollector {
 	return &LogCollector{
-		RuntimeLogs: []string{},
-		mutex:       &sync.Mutex{},
+		mu: &sync.Mutex{},
 	}
 }
-func (lc *LogCollector) Put(line string) {
-	lc.mutex.Lock()
-	defer lc.mutex.Unlock()
-	lc.RuntimeLogs = append(lc.RuntimeLogs, line)
-}
 
-func (lc *LogCollector) reset() {
-	lc.mutex.Lock()
-	defer lc.mutex.Unlock()
-	lc.RuntimeLogs = []string{}
+func (lc *LogCollector) Write(p []byte) (n int, err error) {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	n, err = lc.logs.Write(p)
+	return
 }
 
 func (lc *LogCollector) GetLogs() LogResponse {
-	lc.mutex.Lock()
-	defer lc.mutex.Unlock()
-	response := LogResponse{
-		Logs: strings.Join(lc.RuntimeLogs, ""),
-	}
-	lc.RuntimeLogs = []string{}
-	return response
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	resp := LogResponse{Logs: lc.logs.String()}
+	lc.logs.Reset()
+	return resp
 }

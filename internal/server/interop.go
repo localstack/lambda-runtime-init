@@ -1,242 +1,178 @@
 package server
 
-// Original implementation: lambda/rapidcore/server.go includes Server struct with state
-// Server interface between Runtime API and this init: lambda/interop/model.go:Server
-
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/go-chi/chi"
-	"github.com/localstack/lambda-runtime-init/internal/logging"
-	"github.com/localstack/lambda-runtime-init/internal/utils"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
 	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/core/directinvoke"
+	"go.amzn.com/lambda/core/statejson"
 	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/metering"
+	"go.amzn.com/lambda/rapi/model"
 	"go.amzn.com/lambda/rapidcore"
-	"go.amzn.com/lambda/rapidcore/standalone"
+	"golang.org/x/sync/errgroup"
 )
 
-type LsOpts struct {
-	InteropPort         string
-	RuntimeEndpoint     string
-	RuntimeId           string
-	AccountId           string
-	InitTracingPort     string
-	User                string
-	CodeArchives        string
-	HotReloadingPaths   []string
-	FileWatcherStrategy string
-	ChmodPaths          string
-	LocalstackIP        string
-	InitLogLevel        string
-	EdgePort            string
-	EnableXRayTelemetry string
-	PostInvokeWaitMS    string
-	MaxPayloadSize      string
+type LocalStackInteropsServer struct {
+	*rapidcore.Server
+	localStackAdapter *localstack.LocalStackClient
 }
 
-// Create a type-alias to allow the rapidcore.Server to be easier embedded
-// into the current implementation.
-// TODO: Rename this from delegate.
-type delegate = rapidcore.Server
-
-type CustomInteropServer struct {
-	// Embed the rapidcore.Server in the custom implementation.
-	*delegate
-
-	port             string
-	upstreamEndpoint string
-	runtimeId        string
-}
-
-type LocalStackStatus string
-
-const (
-	Ready LocalStackStatus = "ready"
-	Error LocalStackStatus = "error"
-)
-
-// The InvokeRequest is sent by LocalStack to trigger an invocation
-type InvokeRequest struct {
-	InvokeId           string `json:"invoke-id"`
-	InvokedFunctionArn string `json:"invoked-function-arn"`
-	Payload            string `json:"payload"`
-	TraceId            string `json:"trace-id"`
-}
-
-// The ErrorResponse is sent TO LocalStack when encountering an error
-type ErrorResponse struct {
-	ErrorMessage string   `json:"errorMessage"`
-	ErrorType    string   `json:"errorType,omitempty"`
-	RequestId    string   `json:"requestId,omitempty"`
-	StackTrace   []string `json:"stackTrace,omitempty"`
-}
-
-func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *logging.LogCollector) (server *CustomInteropServer) {
-	server = &CustomInteropServer{
-		delegate:         delegate.(*rapidcore.Server),
-		port:             lsOpts.InteropPort,
-		upstreamEndpoint: lsOpts.RuntimeEndpoint,
-		runtimeId:        lsOpts.RuntimeId,
+func NewInteropServer(ls *localstack.LocalStackClient) *LocalStackInteropsServer {
+	return &LocalStackInteropsServer{
+		Server:            rapidcore.NewServer(),
+		localStackAdapter: ls,
 	}
-
-	// TODO: extract this
-	go func() {
-		r := chi.NewRouter()
-		r.Post("/invoke", func(w http.ResponseWriter, r *http.Request) {
-			invokeR := InvokeRequest{}
-			bytess, err := io.ReadAll(r.Body)
-			if err != nil {
-				log.Error(err)
-			}
-
-			go func() {
-				err = json.Unmarshal(bytess, &invokeR)
-				if err != nil {
-					log.Error(err)
-				}
-
-				invokeResp := &standalone.ResponseWriterProxy{}
-				functionVersion := utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
-				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
-
-				invokeStart := time.Now()
-				err = server.Invoke(invokeResp, &interop.Invoke{
-					ID:                 invokeR.InvokeId,
-					InvokedFunctionArn: invokeR.InvokedFunctionArn,
-					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
-					NeedDebugLogs:      true,
-					TraceID:            invokeR.TraceId,
-					// TODO: set correct segment ID from request
-					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
-					//CognitoIdentityID:     "",
-					//CognitoIdentityPoolID: "",
-					//DeadlineNs:            "",
-					//ClientContext:         "",
-					//ContentType:           "",
-					//ReservationToken:      "",
-					//VersionID:             "",
-					//InvokeReceivedTime:    0,
-					//ResyncState:           interop.Resync{},
-				})
-				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
-				isErr := false
-				if err != nil {
-					switch {
-					case errors.Is(err, rapidcore.ErrInvokeTimeout):
-						log.Debugf("Got invoke timeout")
-						isErr = true
-						errorResponse := ErrorResponse{
-							ErrorMessage: fmt.Sprintf(
-								"%s %s Task timed out after %d.00 seconds",
-								time.Now().Format("2006-01-02T15:04:05Z"),
-								invokeR.InvokeId,
-								timeout,
-							),
-						}
-						jsonErrorResponse, err := json.Marshal(errorResponse)
-						if err != nil {
-							log.Fatalln("unable to marshall json timeout response")
-						}
-						_, err = invokeResp.Write(jsonErrorResponse)
-						if err != nil {
-							log.Fatalln("unable to write to response")
-						}
-					case errors.Is(err, rapidcore.ErrInvokeDoneFailed):
-						// we can actually just continue here, error message is sent below
-					default:
-						log.Fatalln(err)
-					}
-				}
-				// optional sleep. can be used for debugging purposes
-				if lsOpts.PostInvokeWaitMS != "" {
-					waitMS, err := strconv.Atoi(lsOpts.PostInvokeWaitMS)
-					if err != nil {
-						log.Fatalln(err)
-					}
-					time.Sleep(time.Duration(waitMS) * time.Millisecond)
-				}
-				timeoutDuration := time.Duration(timeout) * time.Second
-				memorySize := utils.GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
-				PrintEndReports(invokeR.InvokeId, "", memorySize, invokeStart, timeoutDuration, logCollector)
-
-				serializedLogs, err2 := json.Marshal(logCollector.GetLogs())
-				if err2 == nil {
-					_, err2 = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
-					// TODO: handle err
-				}
-
-				var errR map[string]any
-				marshalErr := json.Unmarshal(invokeResp.Body, &errR)
-
-				if !isErr && marshalErr == nil {
-					_, isErr = errR["errorType"]
-				}
-
-				if isErr {
-					log.Infoln("Sending to /error")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body))
-					if err != nil {
-						log.Error(err)
-					}
-				} else {
-					log.Infoln("Sending to /response")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body))
-					if err != nil {
-						log.Error(err)
-					}
-				}
-			}()
-
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte("OK"))
-		})
-		err := http.ListenAndServe(":"+server.port, r)
-		if err != nil {
-			log.Error(err)
-		}
-
-	}()
-
-	return server
 }
 
-func (c *CustomInteropServer) SendStatus(status LocalStackStatus, payload []byte) error {
-	statusUrl := fmt.Sprintf("%s/status/%s/%s", c.upstreamEndpoint, c.runtimeId, status)
-	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
-	if err != nil {
+func (c *LocalStackInteropsServer) Execute(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.Server.GetInvokeTimeout())
+	defer cancel()
+
+	if err := c.reserve(ctx, invoke); err != nil {
 		return err
 	}
+
+	if err := c.executeInvoke(ctx, responseWriter, invoke); err != nil {
+		return err
+	}
+
 	return nil
 }
 
-// SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
-func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
-	log.Debug("Forwarding SendInitErrorResponse status to LocalStack at %s.", c.upstreamEndpoint)
-	if err := c.SendStatus(Error, resp.Payload); err != nil {
-		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
+func (c *LocalStackInteropsServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+	return c.Execute(context.Background(), responseWriter, invoke)
+}
+
+func (c *LocalStackInteropsServer) executeInvoke(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		isDirect := directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize
+		err := c.Server.FastInvoke(responseWriter, invoke, isDirect)
+		if err != nil {
+			log.WithError(err).Debug("FastInvoke() failed")
+		}
+		return err
+	})
+
+	g.Go(func() error {
+		_, err := c.AwaitRelease()
+		return err
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- g.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-gCtx.Done():
+		if errors.Is(gCtx.Err(), context.DeadlineExceeded) {
+			if _, resetErr := c.Server.Reset("Timeout", 2000); resetErr != nil {
+				log.WithError(resetErr).Errorf("Reset failed")
+			}
+			return rapidcore.ErrInvokeTimeout
+		}
+		return nil
 	}
-	return c.delegate.SendInitErrorResponse(resp)
 }
 
-func (c *CustomInteropServer) SendResponse(invokeID string, resp *interop.StreamableInvokeResponse) error {
-	// c.ToggleDirectInvoke()
-	return c.delegate.SendResponse(invokeID, resp)
+func (c *LocalStackInteropsServer) reserve(ctx context.Context, invoke *interop.Invoke) error {
+	reserveResp, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
+	if err != nil {
+		return err
+	}
+
+	invoke.DeadlineNs = fmt.Sprintf("%d", metering.Monotime()+reserveResp.Token.FunctionTimeout.Nanoseconds())
+
+	// From https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+	// If the first INIT times out, Lambda retries the Init phase on first INVOKE.
+	if err := c.Server.AwaitInitialized(); err != nil {
+		switch err {
+		case rapidcore.ErrInitDoneFailed:
+			if _, resetErr := c.Server.Reset("InitFailed", 2000); resetErr != nil {
+				log.WithError(resetErr).Debug("Reset failed")
+			}
+
+			if _, err := c.Server.Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID); err != nil {
+				return err
+			}
+
+			// If the original INIT failed, let's do another wait since we've triggered a RESERVE
+			if err := c.Server.AwaitInitialized(); err != nil {
+				return err
+			}
+
+			return nil
+		default:
+			return err
+		}
+	}
+
+	return nil
 }
 
-func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.ErrorInvokeResponse) error {
-	// c.ToggleDirectInvoke()
-	return c.delegate.SendErrorResponse(invokeID, resp)
+func (c *LocalStackInteropsServer) AwaitRelease() (*statejson.ReleaseResponse, error) {
+	resp, err := c.Server.AwaitRelease()
+	switch err {
+	case rapidcore.ErrReleaseReservationDone, nil:
+		return resp, nil
+	case rapidcore.ErrInitDoneFailed, rapidcore.ErrInvokeDoneFailed:
+		if _, resetErr := c.Server.Reset("ReleaseFail", 2000); resetErr != nil {
+			log.Errorf("Reset failed: %v", resetErr)
+		}
+		return nil, err
+	default:
+		if _, resetErr := c.Server.Reset("UnexpectedError", 2000); resetErr != nil {
+			log.Errorf("Reset failed: %v", resetErr)
+		}
+		return nil, err
+	}
 }
 
-func (c *CustomInteropServer) ToggleDirectInvoke() {
-	ctx := c.delegate.GetInvokeContext()
-	ctx.Direct = true
+func (c *LocalStackInteropsServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
+	errResp := &model.ErrorResponse{}
+	err := json.Unmarshal(resp.Payload, errResp)
+	if err != nil {
+		return err
+	}
+
+	adaptedErroResp := localstack.ErrorResponse{
+		ErrorMessage: errResp.ErrorMessage,
+		RequestId:    aws.String(c.GetCurrentInvokeID()),
+		ErrorType:    errResp.ErrorType,
+		StackTrace:   errResp.StackTrace,
+	}
+
+	body, err := json.Marshal(adaptedErroResp)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		if err := c.localStackAdapter.SendStatus(localstack.Error, body); err != nil {
+			log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).Error("Failed to send response callback")
+		}
+	}()
+
+	return c.Server.SendInitErrorResponse(resp)
+}
+
+func (c *LocalStackInteropsServer) SendErrorResponse(invokeID string, resp *interop.ErrorInvokeResponse) error {
+	return c.Server.SendErrorResponse(invokeID, resp)
+}
+
+func (c *LocalStackInteropsServer) Close() error {
+	log.Info("Shutting down...")
+	_, err := c.Reset("SandboxTerminated", 2000)
+	return err
 }

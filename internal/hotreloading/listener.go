@@ -8,7 +8,6 @@ import (
 	"github.com/localstack/lambda-runtime-init/internal/filenotify"
 	"github.com/localstack/lambda-runtime-init/internal/utils"
 	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/rapidcore/standalone"
 )
 
 type ChangeListener struct {
@@ -70,7 +69,7 @@ func (c *ChangeListener) Watch() {
 				for _, dir := range toBeRemovedDirs {
 					err := c.watcher.Remove(dir)
 					if err != nil {
-						log.Warnln("Error removing path: ", event.Name, err)
+						log.WithField("event", event.Name).Warnf("Error removing path: %w", err)
 					}
 				}
 			}
@@ -128,7 +127,7 @@ func (c *ChangeListener) Close() error {
 	return c.watcher.Close()
 }
 
-func ResetListener(changeChannel <-chan bool, server standalone.InteropServer) {
+func resetListener(changeChannel <-chan bool, server Resetter) {
 	for {
 		_, more := <-changeChannel
 		if !more {

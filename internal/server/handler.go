@@ -1,58 +1,89 @@
 package server
 
 import (
-	"os"
-	"strings"
-	"time"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"reflect"
 
-	"github.com/localstack/lambda-runtime-init/internal/utils"
-	"go.amzn.com/lambda/interop"
+	"github.com/go-chi/chi"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
+	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/fatalerror"
 	"go.amzn.com/lambda/rapidcore"
-	"go.amzn.com/lambda/rapidcore/env"
 )
 
-func InitHandler(sandbox rapidcore.LambdaInvokeAPI, functionVersion string, timeout int64, bs interop.Bootstrap, accountId string) (time.Time, time.Time) {
-	additionalFunctionEnvironmentVariables := map[string]string{}
+func NewServer(port string, api *LocalStackService) *http.Server {
+	r := chi.NewRouter()
 
-	// Add default Env Vars if they were not defined. This is a required otherwise 1p Python2.7, Python3.6, and
-	// possibly others pre runtime API runtimes will fail. This will be overwritten if they are defined on the system.
-	additionalFunctionEnvironmentVariables["AWS_LAMBDA_LOG_GROUP_NAME"] = "/aws/lambda/Functions"
-	additionalFunctionEnvironmentVariables["AWS_LAMBDA_LOG_STREAM_NAME"] = "$LATEST"
-	additionalFunctionEnvironmentVariables["AWS_LAMBDA_FUNCTION_VERSION"] = "$LATEST"
-	additionalFunctionEnvironmentVariables["AWS_LAMBDA_FUNCTION_MEMORY_SIZE"] = "3008"
-	additionalFunctionEnvironmentVariables["AWS_LAMBDA_FUNCTION_NAME"] = "test_function"
+	r.Post("/invoke", InvokeHandler(api))
 
-	// Forward Env Vars from the running system (container) to what the function can view. Without this, Env Vars will
-	// not be viewable when the function runs.
-	for _, env := range os.Environ() {
-		// Split the env into by the first "=". This will account for if the env var's value has a '=' in it
-		envVar := strings.SplitN(env, "=", 2)
-		additionalFunctionEnvironmentVariables[envVar[0]] = envVar[1]
+	return &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+}
+
+func InvokeHandler(api *LocalStackService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Ensure we always return a response to caller
+		defer func() {
+			w.WriteHeader(200)
+			w.Write([]byte("OK"))
+		}()
+
+		// TODO: We shouldn't be using a custom request body here,
+		// instead we should be forwarding the entire boto3/AWS request
+		var req localstack.InvokeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.WithError(err).Error("Failed to decode invoke request")
+		}
+
+		response, err := api.InvokeForward(r.Context(), req)
+		switch {
+		case errors.Is(err, rapidcore.ErrInvokeTimeout):
+			log.Debugf("Got invoke timeout")
+			errorResponse := localstack.ErrorResponse{
+				ErrorMessage: fmt.Sprintf(
+					"RequestId: %s Error: Task timed out after %s.00 seconds",
+					req.InvokeId,
+					api.function.FunctionTimeoutSec,
+				),
+				ErrorType: "Sandbox.Timedout",
+			}
+
+			errorResponseJson, err := json.Marshal(errorResponse)
+			if err != nil {
+				log.Fatalln("unable to marshal json timeout response")
+			}
+			response = errorResponseJson
+		}
+
+		api.AfterInvoke(r.Context())
+		api.ForwardLogs(req.InvokeId)
+
+		invokeRespDecoder := json.NewDecoder(bytes.NewReader(response))
+		invokeRespDecoder.DisallowUnknownFields()
+
+		// If the response cannot be decoded into an ErrorResponse type,
+		// we assume no error is present.
+		var errorResponse localstack.ErrorResponse
+		if err := invokeRespDecoder.Decode(&errorResponse); err != nil || reflect.ValueOf(errorResponse).IsZero() {
+			api.SendResponse(req.InvokeId, response)
+			return
+		}
+
+		switch errorResponse.ErrorType {
+		case string(fatalerror.FunctionOversizedResponse):
+			// Emulator returns incorrect response
+			errorResponse.ErrorMessage = fmt.Sprintf("Response payload size exceeded maximum allowed payload size (%s bytes).", api.runtime.MaxPayloadSize)
+			if modifiedBody, err := json.Marshal(errorResponse); err == nil {
+				response = modifiedBody
+			}
+		}
+		api.SendError(req.InvokeId, response)
 	}
 
-	initStart := time.Now()
-	// pass to rapid
-	sandbox.Init(&interop.Init{
-		Handler:           utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
-		AwsKey:            os.Getenv("AWS_ACCESS_KEY_ID"),
-		AwsSecret:         os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		AwsSession:        os.Getenv("AWS_SESSION_TOKEN"),
-		AccountID:         accountId,
-		XRayDaemonAddress: utils.GetEnvWithDefault("AWS_XRAY_DAEMON_ADDRESS", "127.0.0.1:2000"),
-		FunctionName:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
-		FunctionVersion:   functionVersion,
-
-		// TODO: Implement runtime management controls
-		// https://aws.amazon.com/blogs/compute/introducing-aws-lambda-runtime-management-controls/
-		RuntimeInfo: interop.RuntimeInfo{
-			ImageJSON: "{}",
-			Arn:       "",
-			Version:   ""},
-		CustomerEnvironmentVariables: additionalFunctionEnvironmentVariables,
-		SandboxType:                  interop.SandboxClassic,
-		Bootstrap:                    bs,
-		EnvironmentVariables:         env.NewEnvironment(),
-	}, timeout*1000)
-	initEnd := time.Now()
-	return initStart, initEnd
 }
