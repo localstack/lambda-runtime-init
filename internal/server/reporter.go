@@ -29,11 +29,11 @@ func (r *InvokeReport) Print(w io.Writer) error {
 		"Billed Duration: %.0f ms\t"+
 		"Memory Size: %s MB\t"+
 		"Max Memory Used: %s MB\t"+
-		"Init Duration: %.2f ms",
+		"Init Duration: %.2f ms\t",
 		r.InvokeId, r.DurationMs, r.BilledDurationMs, r.MemorySizeMB, r.MaxMemoryUsedMB, r.InitDurationMs)
 
 	if r.Status != "" {
-		report += fmt.Sprintf("\tStatus: %s", r.Status)
+		report += fmt.Sprintf("Status: %s", r.Status)
 	}
 
 	if _, err := fmt.Fprintln(w, report); err != nil {
