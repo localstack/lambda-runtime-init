@@ -129,7 +129,7 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 	}
 
 	initStart := metering.Monotime()
-	err = ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
+	err = ls.sandbox.Init(initRequest, initRequest.InitTimeoutMs)
 	ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
 
 	if err != nil {
