@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/env"
 )
+
+var errTimeout = errors.New("timeout")
 
 type LocalStackService struct {
 	sandbox *LocalStackInteropsServer
@@ -129,7 +132,22 @@ func (ls *LocalStackService) Initialize(bs interop.Bootstrap) error {
 	}
 
 	initStart := metering.Monotime()
-	err = ls.sandbox.Init(initRequest, initRequest.InitTimeoutMs)
+
+	initDone := make(chan error, 1)
+	go func() {
+		initDone <- ls.sandbox.Init(initRequest, initRequest.InvokeTimeoutMs)
+	}()
+
+	select {
+	case err = <-initDone:
+	case <-time.After(initTimeout):
+		_, resetFailure := ls.sandbox.Reset("timeout", 2000)
+		if resetFailure != nil {
+			log.WithError(resetFailure).Error("Failed to reset after init timeout")
+		}
+		err = errTimeout
+	}
+
 	ls.initDuration = float64(metering.Monotime()-initStart) / float64(time.Millisecond)
 
 	if err != nil {

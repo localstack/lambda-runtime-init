@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/localstack/lambda-runtime-init/internal/localstack"
@@ -30,35 +29,6 @@ func NewInteropServer(ls *localstack.LocalStackClient) *LocalStackInteropsServer
 		Server:            rapidcore.NewServer(),
 		localStackAdapter: ls,
 	}
-}
-
-func (c *LocalStackInteropsServer) Init(initRequest *interop.Init, timeoutMs int64) error {
-	// This allows us to properly timeout when an INIT request -- which is unimplemented in the upstream.
-
-	initStart := metering.Monotime()
-
-	initDone := make(chan error, 1)
-	go func() {
-		initDone <- c.Server.Init(initRequest, timeoutMs)
-	}()
-
-	var err error
-	select {
-	case err = <-initDone:
-	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
-		if _, resetErr := c.Server.Reset("timeout", 2000); resetErr != nil {
-			log.WithError(resetErr).Error("Failed to reset after init timeout")
-		}
-		err = errors.New("timeout")
-	}
-
-	initDuration := float64(metering.Monotime()-initStart) / float64(time.Millisecond)
-
-	if err != nil {
-		log.WithError(err).WithField("duration", initDuration).Error("Init failed")
-	}
-
-	return err
 }
 
 func (c *LocalStackInteropsServer) Execute(ctx context.Context, responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
