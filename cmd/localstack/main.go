@@ -4,63 +4,70 @@ package main
 
 import (
 	"context"
-	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/rapidcore"
+	"fmt"
+	"net"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/localstack/lambda-runtime-init/internal/aws/lambda"
+	"github.com/localstack/lambda-runtime-init/internal/aws/xray"
+	"github.com/localstack/lambda-runtime-init/internal/bootstrap"
+	"github.com/localstack/lambda-runtime-init/internal/events"
+	"github.com/localstack/lambda-runtime-init/internal/hotreloading"
+	"github.com/localstack/lambda-runtime-init/internal/localstack"
+	"github.com/localstack/lambda-runtime-init/internal/logging"
+	"github.com/localstack/lambda-runtime-init/internal/sandbox"
+
+	"github.com/localstack/lambda-runtime-init/internal/server"
+
+	"github.com/localstack/lambda-runtime-init/internal/supervisor"
+	"github.com/localstack/lambda-runtime-init/internal/tracing"
+	"github.com/localstack/lambda-runtime-init/internal/utils"
+	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/core/directinvoke"
+	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/rapidcore"
 )
 
-type LsOpts struct {
-	InteropPort         string
-	RuntimeEndpoint     string
-	RuntimeId           string
-	AccountId           string
-	InitTracingPort     string
-	User                string
-	CodeArchives        string
-	HotReloadingPaths   []string
-	FileWatcherStrategy string
-	ChmodPaths          string
-	LocalstackIP        string
-	InitLogLevel        string
-	EdgePort            string
-	EnableXRayTelemetry string
-	PostInvokeWaitMS    string
-	MaxPayloadSize      string
-}
-
-func GetEnvOrDie(env string) string {
-	result, found := os.LookupEnv(env)
-	if !found {
-		panic("Could not find environment variable for: " + env)
-	}
-	return result
-}
-
-func InitLsOpts() *LsOpts {
-	return &LsOpts{
+func InitLsOpts() *localstack.Config {
+	return &localstack.Config{
 		// required
-		RuntimeEndpoint: GetEnvOrDie("LOCALSTACK_RUNTIME_ENDPOINT"),
-		RuntimeId:       GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
-		AccountId:       GetenvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
+		RuntimeEndpoint: utils.MustGetEnv("LOCALSTACK_RUNTIME_ENDPOINT"),
+		RuntimeId:       utils.MustGetEnv("LOCALSTACK_RUNTIME_ID"),
+		AccountId:       utils.GetEnvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
 		// optional with default
-		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
-		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
-		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
-		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
-		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
-		MaxPayloadSize:  GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
+		InteropPort:     utils.GetEnvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
+		InitTracingPort: utils.GetEnvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
+		User:            utils.GetEnvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
+		InitLogLevel:    utils.GetEnvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
+		EdgePort:        utils.GetEnvWithDefault("EDGE_PORT", "4566"),
+		MaxPayloadSize:  utils.GetEnvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
 		// optional or empty
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
-		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
+		HotReloadingPaths:   strings.Split(utils.GetEnvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 		FileWatcherStrategy: os.Getenv("LOCALSTACK_FILE_WATCHER_STRATEGY"),
 		EnableXRayTelemetry: os.Getenv("LOCALSTACK_ENABLE_XRAY_TELEMETRY"),
 		LocalstackIP:        os.Getenv("LOCALSTACK_HOSTNAME"),
 		PostInvokeWaitMS:    os.Getenv("LOCALSTACK_POST_INVOKE_WAIT_MS"),
-		ChmodPaths:          GetenvWithDefault("LOCALSTACK_CHMOD_PATHS", "[]"),
+		ChmodPaths:          utils.GetEnvWithDefault("LOCALSTACK_CHMOD_PATHS", "[]"),
+	}
+}
+
+func InitFunctionConfig() lambda.FunctionConfig {
+	return lambda.FunctionConfig{
+		FunctionName:         utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_NAME", "test_function"),
+		FunctionVersion:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST"),
+		FunctionTimeoutSec:   utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_TIMEOUT", "30"),
+		InitializationType:   utils.GetEnvWithDefault("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand"),
+		LogGroupName:         utils.GetEnvWithDefault("AWS_LAMBDA_LOG_GROUP_NAME", "/aws/lambda/Functions"),
+		LogStreamName:        utils.GetEnvWithDefault("AWS_LAMBDA_LOG_STREAM_NAME", "$LATEST"),
+		FunctionMemorySizeMb: utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "128"),
+		FunctionHandler:      utils.GetEnvWithDefault("AWS_LAMBDA_FUNCTION_HANDLER", os.Getenv("_HANDLER")),
 	}
 }
 
@@ -94,42 +101,54 @@ func UnsetLsEnvs() {
 	}
 }
 
+func setupUserPermissions(user string) {
+	logger := utils.UserLogger()
+	// Switch to non-root user and drop root privileges
+	if utils.IsRootUser() && user != "" && user != "root" {
+		uid := 993
+		gid := 990
+		utils.AddUser(user, uid, gid)
+		if err := os.Chown("/tmp", uid, gid); err != nil {
+			log.WithError(err).Warn("Could not change owner of directory /tmp.")
+		}
+		logger.Debug("Process running as root user.")
+		err := utils.DropPrivileges(user)
+		if err != nil {
+			log.WithError(err).Warn("Could not drop root privileges.")
+		} else {
+			logger.Debug("Process running as non-root user.")
+		}
+	}
+}
+
 func main() {
 	// we're setting this to the same value as in the official RIE
 	debug.SetGCPercent(33)
 
 	// configuration parsing
 	lsOpts := InitLsOpts()
+	functionConf := InitFunctionConfig()
+	awsEnvConf, _ := config.NewEnvConfig()
+	awsEnvConf.Credentials.AccountID = lsOpts.AccountId
+
 	UnsetLsEnvs()
 
 	// set up logging following the Logrus logging levels: https://github.com/sirupsen/logrus#level-logging
 	log.SetReportCaller(true)
 	// https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html
-	xRayLogLevel := "info"
-	switch lsOpts.InitLogLevel {
-	case "trace":
-		log.SetFormatter(&log.JSONFormatter{})
-		log.SetLevel(log.TraceLevel)
-		xRayLogLevel = "debug"
-	case "debug":
-		log.SetLevel(log.DebugLevel)
-		xRayLogLevel = "debug"
-	case "info":
-		log.SetLevel(log.InfoLevel)
-	case "warn":
-		log.SetLevel(log.WarnLevel)
-		xRayLogLevel = "warn"
-	case "error":
-		log.SetLevel(log.ErrorLevel)
-		xRayLogLevel = "error"
-	case "fatal":
-		log.SetLevel(log.FatalLevel)
-		xRayLogLevel = "error"
-	case "panic":
-		log.SetLevel(log.PanicLevel)
-		xRayLogLevel = "error"
-	default:
+
+	logLevel, err := log.ParseLevel(lsOpts.InitLogLevel)
+	if err != nil {
 		log.Fatal("Invalid value for LOCALSTACK_INIT_LOG_LEVEL")
+	}
+	log.SetLevel(logLevel)
+
+	xRayLogLevel := lsOpts.InitLogLevel
+	switch logLevel {
+	case log.TraceLevel:
+		log.SetFormatter(&log.JSONFormatter{})
+	case log.ErrorLevel, log.FatalLevel, log.PanicLevel:
+		xRayLogLevel = "error"
 	}
 
 	// patch MaxPayloadSize
@@ -137,112 +156,138 @@ func main() {
 	if err != nil {
 		log.Panicln("Please specify a number for LOCALSTACK_MAX_PAYLOAD_SIZE")
 	}
-	interop.MaxPayloadSize = payloadSize
+	directinvoke.MaxDirectResponseSize = int64(payloadSize)
+	if directinvoke.MaxDirectResponseSize > interop.MaxPayloadSize {
+		log.Infof("Large response size detected (%d bytes), forcing streaming mode", directinvoke.MaxDirectResponseSize)
+		directinvoke.InvokeResponseMode = interop.InvokeResponseModeStreaming
+	}
 
 	// download code archive if env variable is set
-	if err := DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
+	if err := utils.DownloadCodeArchives(lsOpts.CodeArchives); err != nil {
 		log.Fatal("Failed to download code archives: " + err.Error())
 	}
 
-	if err := AdaptFilesystemPermissions(lsOpts.ChmodPaths); err != nil {
+	if err := utils.AdaptFilesystemPermissions(lsOpts.ChmodPaths); err != nil {
 		log.Warnln("Could not change file mode of code directories:", err)
 	}
 
 	// parse CLI args
-	bootstrap, handler := getBootstrap(os.Args)
+	bootstrap, handler := bootstrap.GetBootstrap(os.Args)
 
 	// Switch to non-root user and drop root privileges
-	if IsRootUser() && lsOpts.User != "" && lsOpts.User != "root" {
-		uid := 993
-		gid := 990
-		AddUser(lsOpts.User, uid, gid)
-		if err := os.Chown("/tmp", uid, gid); err != nil {
-			log.Warnln("Could not change owner of directory /tmp:", err)
-		}
-		UserLogger().Debugln("Process running as root user.")
-		err := DropPrivileges(lsOpts.User)
-		if err != nil {
-			log.Warnln("Could not drop root privileges.", err)
-		} else {
-			UserLogger().Debugln("Process running as non-root user.")
-		}
-	}
+	setupUserPermissions(lsOpts.User)
 
-	// file watcher for hot-reloading
-	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	logCollector := NewLogCollector()
-	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
-	tracer := NewLocalStackTracer()
+	// LocalStack client used for sending callbacks
+	lsClient := localstack.NewLocalStackClient(lsOpts.RuntimeEndpoint, lsOpts.RuntimeId)
+
+	// Services required for Sandbox environment
+	interopServer := server.NewInteropServer(lsClient)
+
+	logCollector := logging.NewLogCollector()
+	localStackLogsEgressApi := logging.NewLocalStackLogsEgressAPI(logCollector)
+	tracer := tracing.NewLocalStackTracer()
+	lsEventsAPI := events.NewLocalStackEventsAPI(lsClient)
+	localStackSupv := supervisor.NewLocalStackSupervisor(ctx, lsEventsAPI)
 
 	// build sandbox
-	sandbox := rapidcore.
+	builder := rapidcore.
 		NewSandboxBuilder().
-		//SetTracer(tracer).
-		AddShutdownFunc(func() {
-			log.Debugln("Stopping file watcher")
-			cancelFileWatcher()
-		}).
-		SetExtensionsFlag(true).
-		SetInitCachingFlag(true).
+		SetTracer(tracer).
+		SetEventsAPI(lsEventsAPI).
+		SetHandler(handler).
+		SetInteropServer(interopServer).
 		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer)
+		SetRuntimeAPIAddress("127.0.0.1:9000").
+		SetSupervisor(localStackSupv).
+		SetRuntimeFsRootPath("/")
 
-	// xray daemon
-	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
-	xrayConfig := initConfig(endpoint, xRayLogLevel)
-	d := initDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
-	sandbox.AddShutdownFunc(func() {
+	builder.AddShutdownFunc(func() {
+		interopServer.Close()
+	})
+
+	// Start daemons
+
+	// file watcher for hot-reloading
+	fileWatcherContext, cancelFileWatcher := context.WithCancel(ctx)
+	builder.AddShutdownFunc(func() {
+		cancelFileWatcher()
+	})
+
+	go hotreloading.RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+
+	// Start xray daemon
+	endpoint := "http://" + net.JoinHostPort(lsOpts.LocalstackIP, lsOpts.EdgePort)
+	xrayConfig := xray.NewConfig(endpoint, xRayLogLevel)
+	d := xray.NewDaemon(xrayConfig, lsOpts.EnableXRayTelemetry == "1")
+	builder.AddShutdownFunc(func() {
 		log.Debugln("Shutting down xray daemon")
-		d.stop()
+		d.Stop()
 		log.Debugln("Flushing segments in xray daemon")
-		d.close()
+		d.Close()
 	})
-	runDaemon(d) // async
+	d.Run() // served async
 
-	defaultInterop := sandbox.DefaultInteropServer()
-	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
-	sandbox.SetInteropServer(interopServer)
-	if len(handler) > 0 {
-		sandbox.SetHandler(handler)
-	}
-	exitChan := make(chan struct{})
-	sandbox.AddShutdownFunc(func() {
-		exitChan <- struct{}{}
-	})
+	// Populate our interop server
+	sandboxCtx, internalStateFn := builder.Create()
 
-	// initialize all flows and start runtime API
-	sandboxContext, internalStateFn := sandbox.Create()
-	// Populate our custom interop server
-	interopServer.SetSandboxContext(sandboxContext)
+	interopServer.SetSandboxContext(sandboxCtx)
 	interopServer.SetInternalStateGetter(internalStateFn)
 
-	// get timeout
-	invokeTimeoutEnv := GetEnvOrDie("AWS_LAMBDA_FUNCTION_TIMEOUT") // TODO: collect all AWS_* env parsing
-	invokeTimeoutSeconds, err := strconv.Atoi(invokeTimeoutEnv)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+	// TODO(gregfurman): The default interops server has a shutdown function added in the builder.
+	// This calls sandbox.Reset(), where if sandbox is not set, this will panic.
+	// So instead, just set the sandbox to a noop version.
+	builder.DefaultInteropServer().SetSandboxContext(sandbox.NewNoopSandboxContext())
+
+	// Create the LocalStack service
+	localStackService := server.NewLocalStackService(
+		interopServer, logCollector, lsClient, localStackSupv, xrayConfig.Endpoint, lsOpts, functionConf, awsEnvConf,
+	)
+	defer localStackService.Close()
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`
 	log.Debugln("Starting runtime init.")
-	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
+	if err := localStackService.Initialize(bootstrap); err != nil {
+		log.WithError(err).Warnf("Failed to initialize runtime. Initialization will be retried in the next invoke.")
+	}
+
+	invokeServer := server.NewServer(lsOpts.InteropPort, localStackService)
+	defer invokeServer.Close()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%s", lsOpts.InteropPort))
+		if err != nil {
+			log.Fatalf("failed to start LocalStack Lambda Runtime Interface server: %s", err)
+		}
+		go func() { serverErr <- invokeServer.Serve(listener); close(serverErr) }()
+		log.Debugf("LocalStack API gateway listening on %s", listener.Addr().String())
+	}()
 
 	log.Debugln("Awaiting initialization of runtime init.")
-	if err := interopServer.delegate.AwaitInitialized(); err != nil {
+	if err := interopServer.AwaitInitialized(); err != nil {
 		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
 		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
 		// callback SendInitErrorResponse because it contains the correct error response payload.
-		return
+		// return
+	} else {
+		log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
+		if err := localStackService.SendStatus(localstack.Ready, []byte{}); err != nil {
+			log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
+		}
 	}
 
-	log.Debugln("Completed initialization of runtime init. Sending status ready to LocalStack.")
-	if err := interopServer.localStackAdapter.SendStatus(Ready, []byte{}); err != nil {
-		log.Fatalln("Failed to send status ready to LocalStack " + err.Error() + ". Exiting.")
+	// Block until context is cancelled OR the server errors out
+	select {
+	case <-ctx.Done():
+		log.Info("Shutdown signal received.")
+	case <-serverErr:
+		if err != nil {
+			log.Errorf("Server error: %v", err)
+		}
 	}
-
-	<-exitChan
 }
