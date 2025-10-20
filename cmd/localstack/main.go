@@ -4,13 +4,15 @@ package main
 
 import (
 	"context"
-	log "github.com/sirupsen/logrus"
-	"go.amzn.com/lambda/interop"
-	"go.amzn.com/lambda/rapidcore"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"go.amzn.com/lambda/interop"
+	"go.amzn.com/lambda/rapidcore"
 )
 
 type LsOpts struct {
@@ -188,6 +190,12 @@ func main() {
 		SetLogsEgressAPI(localStackLogsEgressApi).
 		SetTracer(tracer)
 
+	// Corresponds to the 'AWS_LAMBDA_RUNTIME_API' environment variable.
+	// We need to ensure the runtime server is up before the INIT phase,
+	// but this envar is only set after the InitHandler is called.
+	runtimeAPIAddress := "127.0.0.1:9001"
+	sandbox.SetRuntimeAPIAddress(runtimeAPIAddress)
+
 	// xray daemon
 	endpoint := "http://" + lsOpts.LocalstackIP + ":" + lsOpts.EdgePort
 	xrayConfig := initConfig(endpoint, xRayLogLevel)
@@ -224,6 +232,14 @@ func main() {
 		log.Fatalln(err)
 	}
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
+
+	log.Debugf("Awaiting initialization of runtime api at %s.", runtimeAPIAddress)
+	// Fixes https://github.com/localstack/localstack/issues/12680
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := waitForRuntimeAPI(ctx, runtimeAPIAddress); err != nil {
+		log.Fatalf("Lambda Runtime API server at %s did not come up in 30s, with error %s", runtimeAPIAddress, err.Error())
+	}
+	cancel()
 
 	// start runtime init. It is important to start `InitHandler` synchronously because we need to ensure the
 	// notification channels and status fields are properly initialized before `AwaitInitialized`

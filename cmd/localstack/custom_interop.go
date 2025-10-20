@@ -8,17 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/go-chi/chi"
 	log "github.com/sirupsen/logrus"
 	"go.amzn.com/lambda/core/statejson"
 	"go.amzn.com/lambda/interop"
 	"go.amzn.com/lambda/rapidcore"
 	"go.amzn.com/lambda/rapidcore/standalone"
-	"io"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type CustomInteropServer struct {
