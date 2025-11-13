@@ -22,7 +22,7 @@ jobs:
         - uses: actions/checkout@v4
         - uses: actions/setup-python@v5
           with:
-            python-version: '3.11'
+            python-version: '3.14'
         - name: run integration tests
           run: make integ-tests-with-docker-x86-64
   integ-tests-arm64:
@@ -33,7 +33,7 @@ jobs:
         - uses: actions/checkout@v4
         - uses: actions/setup-python@v5
           with:
-            python-version: '3.11'
+            python-version: '3.14'
         - name: run integration tests
           run: make integ-tests-with-docker-arm64
   integ-tests-old:
@@ -44,6 +44,6 @@ jobs:
         - uses: actions/checkout@v4
         - uses: actions/setup-python@v5
           with:
-            python-version: '3.11'
+            python-version: '3.14'
         - name: run integration tests
           run: make integ-tests-with-docker-old
