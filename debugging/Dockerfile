@@ -1,4 +1,4 @@
-FROM public.ecr.aws/lambda/python:3.8
+FROM public.ecr.aws/lambda/python:3.14
 
 # networking tools
 RUN yum install -y iproute lsof iputils bind-utils
