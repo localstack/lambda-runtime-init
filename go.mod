@@ -3,7 +3,7 @@ module go.amzn.com
 go 1.24
 
 require (
-	github.com/aws/aws-lambda-go v1.46.0
+	github.com/aws/aws-lambda-go v1.50.0
 	github.com/aws/aws-sdk-go v1.44.298
 	github.com/aws/aws-xray-daemon v0.0.0-20250212175715-5defe1b8d61b
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
