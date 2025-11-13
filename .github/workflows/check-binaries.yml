@@ -20,7 +20,7 @@ jobs:
         with:
           ref: main
       - name: Download latest release
-        uses: robinraju/release-downloader@v1.10
+        uses: robinraju/release-downloader@v1.12
         with:
           latest: true
           fileName: 'aws-lambda-rie*'
