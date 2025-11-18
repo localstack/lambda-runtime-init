@@ -32,9 +32,9 @@ func shouldUseEventWatcher() bool {
 	err := unix.Uname(&utsname)
 	release := strings.TrimRight(string(utsname.Release[:]), "\x00")
 	log.Println("Release detected: ", release)
-	// cheap check if we are in Docker desktop or not.
+	// cheap check if we are in Docker desktop for Windows (WSL2) or not.
 	// We could also inspect the mounts, but that would be more complicated and needs more parsing
-	return err == nil && !(strings.Contains(release, "linuxkit") || strings.Contains(release, "WSL2"))
+	return err == nil && !(strings.Contains(release, "WSL2"))
 }
 
 // New tries to use a fs-event watcher, and falls back to the poller if there is an error
