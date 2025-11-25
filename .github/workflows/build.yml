@@ -20,7 +20,7 @@ jobs:
         go-version: '1.25'
 
     - name: Run tests
-      run: make tests
+      run: make tests-with-docker
 
   build:
     runs-on: ubuntu-latest
