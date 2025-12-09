@@ -10,8 +10,9 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/handler"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/middleware"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
+	log "github.com/sirupsen/logrus"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/rendering"
@@ -51,6 +52,11 @@ func NewRouter(appCtx appctx.ApplicationContext, registrationService core.Regist
 		router.Get("/runtime/restore/next", handler.NewRestoreNextHandler(registrationService, renderingService).ServeHTTP)
 		router.Post("/runtime/restore/error", handler.NewRestoreErrorHandler(registrationService).ServeHTTP)
 	}
+
+	chi.Walk(router, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		log.Printf("[%s] %s", method, route)
+		return nil
+	})
 
 	return router
 }
