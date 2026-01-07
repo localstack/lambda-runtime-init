@@ -3,7 +3,7 @@ module github.com/aws/aws-lambda-runtime-interface-emulator
 go 1.25
 
 require (
-	github.com/aws/aws-lambda-go v1.50.0
+	github.com/aws/aws-lambda-go v1.51.1
 	github.com/aws/aws-sdk-go v1.44.298
 	github.com/aws/aws-xray-daemon v0.0.0-20250212175715-5defe1b8d61b
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
@@ -18,7 +18,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/sys v0.31.0
+	golang.org/x/sys v0.39.0
 )
 
 require (
