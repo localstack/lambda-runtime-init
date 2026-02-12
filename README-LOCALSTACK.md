@@ -1,6 +1,6 @@
 # Customized lambda-runtime-init for LocalStack
 
-This customized version of the Lambda Runtime Interface Emulator (RIE) is designed to work with [LocalStack](https://github.com/localstack/localstack).
+This customized version of the Lambda Runtime Interface Emulator (RIE) is designed to work with [LocalStack for AWS](https://www.localstack.cloud/localstack-for-aws)).
 
 Refer to [debugging/README.md](./debugging/README.md) for instructions on how to build and test the customized RIE with LocalStack.
 
