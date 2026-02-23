@@ -1,6 +1,6 @@
 module github.com/aws/aws-lambda-runtime-interface-emulator
 
-go 1.25
+go 1.26
 
 require (
 	github.com/aws/aws-lambda-go v1.52.0
@@ -13,9 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/orcaman/concurrent-map v1.0.0
-	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/shirou/gopsutil v2.21.11+incompatible
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.10.0
@@ -24,7 +22,6 @@ require (
 )
 
 require (
-	github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
