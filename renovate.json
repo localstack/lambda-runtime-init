@@ -2,5 +2,31 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump",
+      "groupName": "Go toolchain"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["go"],
+      "groupName": "Go toolchain"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "excludePackageNames": ["go"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Go dependencies (non-major)"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "excludePackageNames": ["go"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "Go dependencies (major)"
+    }
   ]
 }
