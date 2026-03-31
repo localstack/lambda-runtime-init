@@ -170,6 +170,8 @@ func main() {
 		}
 	}
 
+	EnsureHome()
+
 	// file watcher for hot-reloading
 	fileWatcherContext, cancelFileWatcher := context.WithCancel(context.Background())
 

@@ -3,12 +3,13 @@ package main
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"os"
 	"os/user"
 	"strconv"
 	"strings"
 	"syscall"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // AddUser adds a UNIX user (e.g., sbx_user1051) to the passwd and shadow files if not already present
@@ -80,6 +81,21 @@ func UserLogger() *log.Entry {
 		"euid":     os.Geteuid(),
 		"gid":      os.Getgid(),
 	})
+}
+
+// EnsureHome sets HOME=/tmp if the current process has no /etc/passwd entry.
+// UnsetLsEnvs strips HOME for AWS parity, which is fine in the normal
+// root-start flow where AddUser has written a passwd entry. But when the
+// container is launched with --user=1000:1000, AddUser is never called and
+// Node's os.homedir() / AWS SDK config loading fail with ENOENT.
+func EnsureHome() {
+	if _, err := user.Current(); err != nil {
+		if setErr := os.Setenv("HOME", "/tmp"); setErr != nil {
+			log.Warnln("Could not set HOME=/tmp for non-passwd user:", setErr)
+		} else {
+			log.Debugln("No /etc/passwd entry for current UID; HOME set to /tmp")
+		}
+	}
 }
 
 // DropPrivileges switches to another UNIX user by dropping root privileges
