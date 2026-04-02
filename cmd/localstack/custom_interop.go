@@ -41,9 +41,18 @@ const (
 	Error LocalStackStatus = "error"
 )
 
+// transport with disabled proxy, to avoid issues with customers having proxies configured in their environment
+// should be used for all communication with the LocalStack instance
+var transport http.RoundTripper = &http.Transport{
+	Proxy: nil,
+}
+
 func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
+	client := &http.Client{
+		Transport: transport,
+	}
 	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
+	_, err := client.Post(statusUrl, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -75,6 +84,9 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 			UpstreamEndpoint: lsOpts.RuntimeEndpoint,
 			RuntimeId:        lsOpts.RuntimeId,
 		},
+	}
+	client := &http.Client{
+		Transport: transport,
 	}
 
 	// TODO: extract this
@@ -159,7 +171,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 
 				serializedLogs, err2 := json.Marshal(logCollector.getLogs())
 				if err2 == nil {
-					_, err2 = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
+					_, err2 = client.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
 					// TODO: handle err
 				}
 
@@ -172,13 +184,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 
 				if isErr {
 					log.Infoln("Sending to /error")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body))
+					_, err = client.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body))
 					if err != nil {
 						log.Error(err)
 					}
 				} else {
 					log.Infoln("Sending to /response")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body))
+					_, err = client.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body))
 					if err != nil {
 						log.Error(err)
 					}
