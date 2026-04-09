@@ -26,7 +26,7 @@
       "matchManagers": ["gomod"],
       "excludePackageNames": ["go"],
       "matchUpdateTypes": ["major"],
-      "groupName": "Go dependencies (major)"
+      "enabled": false
     }
   ]
 }
