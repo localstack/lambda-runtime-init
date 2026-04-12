@@ -30,7 +30,7 @@ jobs:
           make tests-with-docker
           make integ-tests
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Release ${{ github.event.inputs.releaseVersion }}
           tag_name: v${{ github.event.inputs.releaseVersion }}
