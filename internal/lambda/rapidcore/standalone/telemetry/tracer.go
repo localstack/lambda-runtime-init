@@ -5,8 +5,12 @@ package telemetry
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
@@ -15,6 +19,9 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/model"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	awsxray "github.com/aws/aws-sdk-go/service/xray"
 	"github.com/sirupsen/logrus"
 )
 
@@ -29,6 +36,33 @@ const InvokeSubsegmentName = "Invocation"
 
 // OverheadSubsegmentName provides name attribute for Overhead subsegment
 const OverheadSubsegmentName = "Overhead"
+
+type TracingEvent struct {
+	Message     string `json:"message"`
+	TraceID     string `json:"trace_id"`
+	SegmentName string `json:"segment_name"`
+	SegmentID   string `json:"segment_id"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+type xraySubsegmentDoc struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	StartTime float64 `json:"start_time"`
+	EndTime   float64 `json:"end_time"`
+}
+
+type xraySegmentDoc struct {
+	Name        string              `json:"name"`
+	ID          string              `json:"id"`
+	TraceID     string              `json:"trace_id"`
+	StartTime   float64             `json:"start_time"`
+	EndTime     float64             `json:"end_time"`
+	ParentID    string              `json:"parent_id,omitempty"`
+	Type        string              `json:"type,omitempty"`   // "subsegment" when parent present
+	Origin      string              `json:"origin,omitempty"` // "AWS::Lambda::Function"
+	Subsegments []xraySubsegmentDoc `json:"subsegments,omitempty"`
+}
 
 type StandaloneTracer struct {
 	startFunction          func(ctx context.Context, invoke *interop.Invoke, segmentName string, timestamp int64)
@@ -45,14 +79,20 @@ type StandaloneTracer struct {
 	restoreStartTime       int64
 	restoreEndTime         int64
 	restorePresent         bool
+
+	xrayClient         *awsxray.XRay
+	mu                 sync.Mutex
+	segmentStartTimes  map[string]int64    // segmentName → start nanoseconds
+	segmentIDs         map[string]string   // segmentName → 16-char hex ID
+	pendingSubsegments []xraySubsegmentDoc // accumulated per-invocation
 }
 
-type TracingEvent struct {
-	Message     string `json:"message"`
-	TraceID     string `json:"trace_id"`
-	SegmentName string `json:"segment_name"`
-	SegmentID   string `json:"segment_id"`
-	Timestamp   int64  `json:"timestamp"`
+func generateSegmentID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 func (t *StandaloneTracer) Configure(invoke *interop.Invoke) {
@@ -67,6 +107,11 @@ func (t *StandaloneTracer) Configure(invoke *interop.Invoke) {
 		t.restoreStartTime = metering.MonoToEpoch(invoke.RestoreStartTimeMonotime)
 		t.restoreEndTime = t.restoreStartTime + invoke.RestoreDurationNs
 	}
+	t.mu.Lock()
+	t.pendingSubsegments = nil
+	t.segmentStartTimes = make(map[string]int64)
+	t.segmentIDs = make(map[string]string)
+	t.mu.Unlock()
 }
 
 func (t *StandaloneTracer) CaptureInvokeSegment(ctx context.Context, criticalFunction func(context.Context) error) error {
@@ -78,8 +123,11 @@ func (t *StandaloneTracer) CaptureInitSubsegment(ctx context.Context, criticalFu
 }
 
 func (t *StandaloneTracer) CaptureInvokeSubsegment(ctx context.Context, criticalFunction func(context.Context) error) error {
-	t.invocationSubsegmentID = InvokeSubsegmentName
-	return t.withStartAndEnd(ctx, criticalFunction, InvokeSubsegmentName)
+	err := t.withStartAndEnd(ctx, criticalFunction, InvokeSubsegmentName)
+	t.mu.Lock()
+	t.invocationSubsegmentID = t.segmentIDs[InvokeSubsegmentName]
+	t.mu.Unlock()
+	return err
 }
 
 func (t *StandaloneTracer) CaptureOverheadSubsegment(ctx context.Context, criticalFunction func(context.Context) error) error {
@@ -87,7 +135,11 @@ func (t *StandaloneTracer) CaptureOverheadSubsegment(ctx context.Context, critic
 }
 
 func (t *StandaloneTracer) withStartAndEnd(ctx context.Context, criticalFunction func(context.Context) error, segmentName string) error {
-	ctx = telemetry.NewTraceContext(ctx, t.rootTraceID, segmentName)
+	segID := generateSegmentID()
+	t.mu.Lock()
+	t.segmentIDs[segmentName] = segID
+	t.mu.Unlock()
+	ctx = telemetry.NewTraceContext(ctx, t.rootTraceID, segID)
 	t.startFunction(ctx, t.invoke, segmentName, time.Now().UnixNano())
 	err := criticalFunction(ctx)
 	t.endFunction(ctx, t.invoke, segmentName, time.Now().UnixNano())
@@ -100,11 +152,14 @@ func (t *StandaloneTracer) RecordInitStartTime() {
 
 func (t *StandaloneTracer) RecordInitEndTime() {
 	t.initEndTime = time.Now().UnixNano()
-
 }
 
 func (t *StandaloneTracer) sendPrepSubsegment(ctx context.Context, subsegmentName string, startTime int64, endTime int64) {
-	ctx = telemetry.NewTraceContext(ctx, t.rootTraceID, subsegmentName)
+	segID := generateSegmentID()
+	t.mu.Lock()
+	t.segmentIDs[subsegmentName] = segID
+	t.mu.Unlock()
+	ctx = telemetry.NewTraceContext(ctx, t.rootTraceID, segID)
 	t.startFunction(ctx, t.invoke, subsegmentName, startTime)
 	t.endFunction(ctx, t.invoke, subsegmentName, endTime)
 }
@@ -112,11 +167,13 @@ func (t *StandaloneTracer) sendPrepSubsegment(ctx context.Context, subsegmentNam
 func (t *StandaloneTracer) SendInitSubsegmentWithRecordedTimesOnce(ctx context.Context) {
 	t.sendPrepSubsegment(ctx, InitSubsegmentName, t.initStartTime, t.initEndTime)
 }
+
 func (t *StandaloneTracer) SendRestoreSubsegmentWithRecordedTimesOnce(ctx context.Context) {
 	if t.restorePresent {
 		t.sendPrepSubsegment(ctx, RestoreSubsegmentName, t.restoreStartTime, t.restoreEndTime)
 	}
 }
+
 func (t *StandaloneTracer) MarkError(ctx context.Context)                                    {}
 func (t *StandaloneTracer) AttachErrorCause(ctx context.Context, errorCause json.RawMessage) {}
 
@@ -128,7 +185,6 @@ func (t *StandaloneTracer) WithError(ctx context.Context, appCtx appctx.Applicat
 }
 
 func (t *StandaloneTracer) BuildTracingHeader() func(ctx context.Context) string {
-	// extract root trace ID and parent from context and build the tracing header
 	return func(ctx context.Context) string {
 		var parent string
 		var ok bool
@@ -162,6 +218,7 @@ func (t *StandaloneTracer) BuildTracingCtxForStart() *interop.TracingCtx {
 		Value:  telemetry.BuildFullTraceID(t.rootTraceID, t.invoke.LambdaSegmentID, t.sampled),
 	}
 }
+
 func (t *StandaloneTracer) BuildTracingCtxAfterInvokeComplete() *interop.TracingCtx {
 	if t.rootTraceID == "" || t.sampled != model.XRaySampled || t.invocationSubsegmentID == "" {
 		return nil
@@ -174,43 +231,123 @@ func (t *StandaloneTracer) BuildTracingCtxAfterInvokeComplete() *interop.Tracing
 	}
 }
 
+func (t *StandaloneTracer) sendToXRay(seg xraySegmentDoc) {
+	if t.xrayClient == nil {
+		return
+	}
+	data, err := json.Marshal(seg)
+	if err != nil {
+		log.WithError(err).Error("xray: failed to marshal segment")
+		return
+	}
+	doc := aws.String(string(data))
+	if _, err := t.xrayClient.PutTraceSegments(&awsxray.PutTraceSegmentsInput{
+		TraceSegmentDocuments: []*string{doc},
+	}); err != nil {
+		log.WithError(err).Warn("xray: PutTraceSegments failed")
+	}
+}
+
 func isTracingEnabled(root, parent, sampled string) bool {
 	return len(root) != 0 && len(parent) != 0 && sampled == "1"
 }
 
-func NewStandaloneTracer(api *StandaloneEventsAPI) *StandaloneTracer {
+func NewStandaloneTracer() *StandaloneTracer {
+	tracer := &StandaloneTracer{
+		segmentStartTimes:  make(map[string]int64),
+		segmentIDs:         make(map[string]string),
+		pendingSubsegments: nil,
+	}
+
+	// Use the X-Ray daemon's HTTP proxy as the SDK endpoint.
+	// AWS_XRAY_DAEMON_ADDRESS is the standard Lambda env var (default 127.0.0.1:2000).
+	daemonAddr := os.Getenv("AWS_XRAY_DAEMON_ADDRESS")
+	if daemonAddr == "" {
+		daemonAddr = "127.0.0.1:2000"
+	}
+	endpoint := "http://" + daemonAddr
+
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region = os.Getenv("AWS_DEFAULT_REGION")
+	}
+
+	awsCfg := &aws.Config{
+		Endpoint: aws.String(endpoint),
+	}
+	if region != "" {
+		awsCfg.Region = aws.String(region)
+	}
+	if sess, err := session.NewSession(awsCfg); err == nil {
+		tracer.xrayClient = awsxray.New(sess)
+	} else {
+		log.WithError(err).Warn("xray: failed to initialize client, traces will not be sent")
+	}
+
 	startCaptureFn := func(ctx context.Context, i *interop.Invoke, segmentName string, timestamp int64) {
 		root, parent, sampled, _ := telemetry.ParseTracingHeader(i.TraceID)
-		if isTracingEnabled(root, parent, sampled) {
-			e := TracingEvent{
-				Message:     "START",
-				TraceID:     root,
-				SegmentName: segmentName,
-				SegmentID:   parent,
-				Timestamp:   timestamp / int64(time.Millisecond),
-			}
-			api.LogTrace(e)
-			log.WithFields(logrus.Fields{"trace": e}).Info("sandbox trace")
+		if !isTracingEnabled(root, parent, sampled) {
+			return
 		}
+		tracer.mu.Lock()
+		tracer.segmentStartTimes[segmentName] = timestamp
+		tracer.mu.Unlock()
 	}
 
 	endCaptureFn := func(ctx context.Context, i *interop.Invoke, segmentName string, timestamp int64) {
 		root, parent, sampled, _ := telemetry.ParseTracingHeader(i.TraceID)
-		if isTracingEnabled(root, parent, sampled) {
-			e := TracingEvent{
-				Message:     "END",
-				TraceID:     root,
-				SegmentName: "",
-				SegmentID:   parent,
-				Timestamp:   timestamp / int64(time.Millisecond),
+		if !isTracingEnabled(root, parent, sampled) {
+			return
+		}
+
+		tracer.mu.Lock()
+		startTime := tracer.segmentStartTimes[segmentName]
+		segID := tracer.segmentIDs[segmentName]
+		tracer.mu.Unlock()
+
+		if segmentName == "STANDALONE_FUNCTION_NAME" {
+			// Prefer the LambdaSegmentID assigned by the invoker if present.
+			rootSegID := i.LambdaSegmentID
+			if rootSegID == "" {
+				rootSegID = segID
 			}
-			api.LogTrace(e)
-			log.WithFields(logrus.Fields{"trace": e}).Info("sandbox trace")
+			functionName := os.Getenv("AWS_LAMBDA_FUNCTION_NAME")
+			if functionName == "" {
+				functionName = "function"
+			}
+			seg := xraySegmentDoc{
+				Name:        functionName,
+				ID:          rootSegID,
+				TraceID:     root,
+				StartTime:   float64(startTime) / 1e9,
+				EndTime:     float64(timestamp) / 1e9,
+				Origin:      "AWS::Lambda::Function",
+				Subsegments: tracer.pendingSubsegments,
+			}
+			// If there is an upstream parent (e.g. API Gateway → Lambda), reference it.
+			if parent != "" && parent != rootSegID {
+				seg.ParentID = parent
+				seg.Type = "subsegment"
+			}
+			tracer.sendToXRay(seg)
+		} else {
+			sub := xraySubsegmentDoc{
+				ID:        segID,
+				Name:      segmentName,
+				StartTime: float64(startTime) / 1e9,
+				EndTime:   float64(timestamp) / 1e9,
+			}
+			tracer.mu.Lock()
+			tracer.pendingSubsegments = append(tracer.pendingSubsegments, sub)
+			tracer.mu.Unlock()
+			log.WithFields(logrus.Fields{
+				"segment": segmentName,
+				"id":      segID,
+			}).Debug("xray: subsegment recorded")
 		}
 	}
 
-	return &StandaloneTracer{
-		startFunction: startCaptureFn,
-		endFunction:   endCaptureFn,
-	}
+	tracer.startFunction = startCaptureFn
+	tracer.endFunction = endCaptureFn
+	return tracer
 }

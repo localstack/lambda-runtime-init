@@ -12,16 +12,16 @@ Useful if you want more control over the API between the init and LocalStack (e.
 2. Start LocalStack with the following flags:
 
     ```
-    LAMBDA_INIT_BIN_PATH=/Users/joe/Projects/LocalStack/lambda-runtime-init/custom-tests/init/var/rapid/init
-    LAMBDA_INIT_BOOTSTRAP_PATH=/Users/joe/Projects/LocalStack/lambda-runtime-init/custom-tests/init/var/rapid/entrypoint.sh
+    LAMBDA_INIT_BIN_PATH=lambda-runtime-init/debugging/init/var/rapid/init
+    LAMBDA_INIT_BOOTSTRAP_PATH=lambda-runtime-init/debugging/init/var/rapid/entrypoint.sh
     LAMBDA_INIT_DEBUG=1
-    LAMBDA_INIT_DELVE_PATH=/Users/joe/Projects/LocalStack/lambda-runtime-init/custom-tests/init/var/rapid/dlv
+    LAMBDA_INIT_DELVE_PATH=lambda-runtime-init/debugging/init/var/rapid/dlv
     LAMBDA_INIT_DELVE_PORT=40000
     LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=3600
     TEST_DISABLE_RETRIES_AND_TIMEOUTS=1
     ```
 
-   * `LAMBDA_INIT_DEBUG=1|0` enables or disables RIE copying and debugging.
+   * `LAMBDA_INIT_DEBUG=1|0` enables or disables debugging (i.e., dlv and entrypoint copying).
    * `LAMBDA_REMOVE_CONTAINERS=0` keeps exited containers
    * Adjust the path to `lambda-runtime-init` accordingly
 

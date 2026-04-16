@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone/telemetry"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -177,7 +178,9 @@ func main() {
 
 	logCollector := NewLogCollector()
 	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
-	tracer := NewLocalStackTracer()
+	//tracer := NewLocalStackTracer()
+	//TODO: figure out how to use event api dependency for logging
+	tracer := telemetry.NewStandaloneTracer()
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -188,7 +191,7 @@ func main() {
 			cancelFileWatcher()
 		}).
 		SetExtensionsFlag(true).
-		SetInitCachingFlag(true).
+		SetInitCachingFlag(false).
 		SetLogsEgressAPI(localStackLogsEgressApi).
 		SetTracer(tracer)
 

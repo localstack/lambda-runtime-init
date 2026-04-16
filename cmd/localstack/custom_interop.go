@@ -56,6 +56,7 @@ type InvokeRequest struct {
 	InvokedFunctionArn string `json:"invoked-function-arn"`
 	Payload            string `json:"payload"`
 	TraceId            string `json:"trace-id"`
+	LambdaSegmentId    string `json:"lambda-segment-id"`
 }
 
 // The ErrorResponse is sent TO LocalStack when encountering an error
@@ -64,6 +65,21 @@ type ErrorResponse struct {
 	ErrorType    string   `json:"errorType,omitempty"`
 	RequestId    string   `json:"requestId,omitempty"`
 	StackTrace   []string `json:"stackTrace,omitempty"`
+}
+
+// postWithTraceHeader is like http.Post but adds X-Amzn-Trace-Id to the request so that
+// LocalStack can link the response/error/logs callbacks back to the originating Lambda invocation
+// span in the OpenTelemetry trace graph.
+func postWithTraceHeader(url, contentType string, body io.Reader, traceId string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if traceId != "" {
+		req.Header.Set("X-Amzn-Trace-Id", traceId)
+	}
+	return http.DefaultClient.Do(req)
 }
 
 func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
@@ -102,10 +118,9 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 					ID:                 invokeR.InvokeId,
 					InvokedFunctionArn: invokeR.InvokedFunctionArn,
 					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
-					NeedDebugLogs:      true,
-					TraceID:            invokeR.TraceId,
-					// TODO: set correct segment ID from request
-					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
+					NeedDebugLogs:   true,
+					TraceID:         invokeR.TraceId,
+					LambdaSegmentID: invokeR.LambdaSegmentId,
 					//CognitoIdentityID:     "",
 					//CognitoIdentityPoolID: "",
 					//DeadlineNs:            "",
@@ -159,7 +174,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 
 				serializedLogs, err2 := json.Marshal(logCollector.getLogs())
 				if err2 == nil {
-					_, err2 = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
+					_, err2 = postWithTraceHeader(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs), invokeR.TraceId)
 					// TODO: handle err
 				}
 
@@ -172,13 +187,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 
 				if isErr {
 					log.Infoln("Sending to /error")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body))
+					_, err = postWithTraceHeader(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body), invokeR.TraceId)
 					if err != nil {
 						log.Error(err)
 					}
 				} else {
 					log.Infoln("Sending to /response")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body))
+					_, err = postWithTraceHeader(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body), invokeR.TraceId)
 					if err != nil {
 						log.Error(err)
 					}
