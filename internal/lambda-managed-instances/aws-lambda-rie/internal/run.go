@@ -10,6 +10,12 @@ import (
 	"os"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/google/uuid"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+>>>>>>> 391c3f1d
 	rieinvoke "github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/aws-lambda-rie/internal/invoke"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/aws-lambda-rie/internal/telemetry"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/interop"
@@ -47,8 +53,14 @@ func Run(supv supvmodel.ProcessSupervisor, args []string, fileUtil utils.FileUti
 	responderFactoryFunc := func(_ context.Context, invokeReq interop.InvokeRequest) invoke.InvokeResponseSender {
 		return rieinvoke.NewResponder(invokeReq)
 	}
+<<<<<<< HEAD
 	invokeRouter := invoke.NewInvokeRouter(rapid.MaxIdleRuntimesQueueSize, eventsAPI, responderFactoryFunc, timeout.NewRecentCache())
 
+=======
+	invokeRouter := invoke.NewInvokeRouter(rapid.RuntimePoolSize, eventsAPI, responderFactoryFunc, timeout.NewRecentCache())
+
+	metadataToken := uuid.NewString()
+>>>>>>> 391c3f1d
 	deps := rapid.Dependencies{
 		EventsAPI:                eventsAPI,
 		LogsEgressAPI:            telemetry.NewLogsEgress(telemetryAPIRelay, os.Stdout),
@@ -57,9 +69,16 @@ func Run(supv supvmodel.ProcessSupervisor, args []string, fileUtil utils.FileUti
 		RuntimeAPIAddrPort:       runtimeAPIAddr,
 		FileUtils:                fileUtil,
 		InvokeRouter:             invokeRouter,
+<<<<<<< HEAD
 	}
 
 	raptorApp, err := raptor.StartApp(deps, "", noOpLogger{})
+=======
+		MetadataService:          lmds.NewService(metadataToken),
+	}
+
+	raptorApp, err := raptor.StartApp(deps, "", metadataToken, noOpLogger{})
+>>>>>>> 391c3f1d
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("could not start runtime api server: %w", err)
 	}

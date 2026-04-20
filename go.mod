@@ -1,6 +1,10 @@
 module github.com/aws/aws-lambda-runtime-interface-emulator
 
+<<<<<<< HEAD
 go 1.26.1
+=======
+go 1.25.7
+>>>>>>> 391c3f1d
 
 require (
 	github.com/aws/aws-lambda-go v1.52.0
@@ -9,6 +13,7 @@ require (
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi v1.5.5
+<<<<<<< HEAD
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/jessevdk/go-flags v1.6.1
@@ -19,6 +24,16 @@ require (
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.41.0
+=======
+	github.com/go-chi/chi/v5 v5.2.2
+	github.com/google/uuid v1.6.0
+	github.com/jessevdk/go-flags v1.5.0
+	github.com/orcaman/concurrent-map v1.0.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
+	github.com/sirupsen/logrus v1.9.3
+	github.com/stretchr/testify v1.9.0
+	golang.org/x/sync v0.6.0
+>>>>>>> 391c3f1d
 )
 
 require (

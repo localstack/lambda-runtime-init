@@ -11,6 +11,10 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+<<<<<<< HEAD
+=======
+	"time"
+>>>>>>> 391c3f1d
 
 	cmap "github.com/orcaman/concurrent-map"
 
@@ -64,7 +68,11 @@ type timeoutCache interface {
 type InvokeRouter struct {
 	eventsApi interop.EventsAPI
 
+<<<<<<< HEAD
 	idleRuntimes chan runningInvoke
+=======
+	runtimePool *RuntimePool
+>>>>>>> 391c3f1d
 
 	runningInvokes cmap.ConcurrentMap
 
@@ -76,14 +84,22 @@ type InvokeRouter struct {
 }
 
 func NewInvokeRouter(
+<<<<<<< HEAD
 	maxIdleRuntimesQueueSize int,
+=======
+	runtimePoolSize int,
+>>>>>>> 391c3f1d
 	telemetryEventsApi interop.EventsAPI,
 	responderFactoryFunc ResponderFactoryFunc,
 	timeoutCache timeoutCache,
 ) *InvokeRouter {
 	return &InvokeRouter{
+<<<<<<< HEAD
 
 		idleRuntimes:   make(chan runningInvoke, maxIdleRuntimesQueueSize),
+=======
+		runtimePool:    NewRuntimePool(runtimePoolSize),
+>>>>>>> 391c3f1d
 		runningInvokes: cmap.New(),
 		eventsApi:      telemetryEventsApi,
 		timeoutCache:   timeoutCache,
@@ -101,24 +117,44 @@ func (ir *InvokeRouter) Invoke(ctx context.Context, initData interop.InitStaticD
 
 	var idleRuntime runningInvoke
 
+<<<<<<< HEAD
 	metrics.UpdateConcurrencyMetrics(ir.runningInvokes.Count(), len(ir.idleRuntimes))
 
 	if !ir.runningInvokes.SetIfAbsent(invokeReq.InvokeID(), idleRuntime) {
 		logging.Warn(ctx, "InvokeRouter error: duplicated invokeId")
 		return model.NewClientError(ErrInvokeIdAlreadyExists, model.ErrorSeverityError, model.ErrorDublicatedInvokeId), false
+=======
+	metrics.UpdateConcurrencyMetrics(ir.runningInvokes.Count(), ir.GetRuntimePoolCounts().Total)
+
+	if !ir.runningInvokes.SetIfAbsent(invokeReq.InvokeID(), idleRuntime) {
+		logging.Warn(ctx, "InvokeRouter error: duplicated invokeId")
+		return model.NewClientError(ErrInvokeIdAlreadyExists, model.ErrorSeverityError, model.ErrorDuplicatedInvokeId), false
+>>>>>>> 391c3f1d
 	}
 
 	defer ir.runningInvokes.Remove(invokeReq.InvokeID())
 
+<<<<<<< HEAD
 	select {
 	case idleRuntime = <-ir.idleRuntimes:
 
 		ir.runningInvokes.Set(invokeReq.InvokeID(), idleRuntime)
 	default:
+=======
+	idleRuntime, wasReserved, acquireErr := ir.runtimePool.Acquire(invokeReq.InvokeID())
+	if acquireErr != nil {
+>>>>>>> 391c3f1d
 		logging.Warn(ctx, "InvokeRouter: no ready runtimes")
 		return model.NewClientError(ErrInvokeNoReadyRuntime, model.ErrorSeverityError, model.ErrorRuntimeUnavailable), false
 	}
 
+<<<<<<< HEAD
+=======
+	metrics.SetReservationUsed(wasReserved)
+
+	ir.runningInvokes.Set(invokeReq.InvokeID(), idleRuntime)
+
+>>>>>>> 391c3f1d
 	return idleRuntime.RunInvokeAndSendResult(ctx, initData, invokeReq, metrics), true
 }
 
@@ -127,9 +163,15 @@ func (ir *InvokeRouter) RuntimeNext(ctx context.Context, runtimeReq http.Respons
 
 	newRunningInvoke := ir.createRunningInvoke(runtimeReq)
 
+<<<<<<< HEAD
 	if err := ir.addIdleRuntimeToQueue(newRunningInvoke); err != nil {
 		logging.Error(ctx, "InvokeRouter: failed to add idle runtime to the queue", "err", err)
 		return nil, err
+=======
+	if err := ir.runtimePool.Add(newRunningInvoke); err != nil {
+		logging.Error(ctx, "InvokeRouter: failed to add idle runtime to the queue", "err", err)
+		return nil, model.NewCustomerError(model.ErrorRuntimeTooManyIdleRuntimes)
+>>>>>>> 391c3f1d
 	}
 
 	return newRunningInvoke, nil
@@ -183,6 +225,7 @@ func (ir *InvokeRouter) AbortRunningInvokes(metrics interop.ShutdownMetrics, err
 
 }
 
+<<<<<<< HEAD
 func (ir *InvokeRouter) addIdleRuntimeToQueue(invoke runningInvoke) model.AppError {
 	select {
 	case ir.idleRuntimes <- invoke:
@@ -192,10 +235,42 @@ func (ir *InvokeRouter) addIdleRuntimeToQueue(invoke runningInvoke) model.AppErr
 	}
 }
 
+=======
+>>>>>>> 391c3f1d
 func (ir *InvokeRouter) GetRunningInvokesCount() int {
 	return ir.runningInvokes.Count()
 }
 
+<<<<<<< HEAD
 func (ir *InvokeRouter) GetIdleRuntimesCount() int {
 	return len(ir.idleRuntimes)
+=======
+func (ir *InvokeRouter) GetRuntimePoolCounts() RuntimePoolCounts {
+	return ir.runtimePool.Counts()
+}
+
+func (ir *InvokeRouter) ReserveIdleRuntime(ctx context.Context, invokeID interop.InvokeID, timeout time.Duration) (interop.ReserveIdleRuntimeResponse, model.AppError) {
+	logging.Debug(ctx, "InvokeRouter: reserving idle runtime")
+
+	err := ir.runtimePool.Reserve(invokeID, timeout, func() {
+		if ir.runtimePool.ExpireReservation(invokeID) {
+			logging.Info(ctx, "InvokeRouter: reservation expired")
+		}
+	})
+	if err != nil {
+		switch err {
+		case ErrInvokeIdAlreadyExists:
+			logging.Warn(ctx, "InvokeRouter: duplicate reservation")
+			return interop.ReserveIdleRuntimeFailureResponse{ErrorType: model.ErrorDuplicatedInvokeId},
+				model.NewClientError(err, model.ErrorSeverityError, model.ErrorDuplicatedInvokeId)
+		default:
+			logging.Warn(ctx, "InvokeRouter: no idle runtimes for reservation")
+			return interop.ReserveIdleRuntimeFailureResponse{ErrorType: model.ErrorRuntimeUnavailable},
+				model.NewClientError(err, model.ErrorSeverityError, model.ErrorRuntimeUnavailable)
+		}
+	}
+
+	logging.Info(ctx, "InvokeRouter: reservation created")
+	return interop.ReserveIdleRuntimeSuccessResponse{}, nil
+>>>>>>> 391c3f1d
 }

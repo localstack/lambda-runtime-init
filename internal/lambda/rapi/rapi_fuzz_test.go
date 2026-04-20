@@ -27,6 +27,17 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
 	"github.com/stretchr/testify/assert"
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/extensions"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
+>>>>>>> 391c3f1d
 )
 
 type runtimeFunctionErrStruct struct {
@@ -187,6 +198,7 @@ func FuzzRestoreErrorHandler(f *testing.F) {
 }
 
 func makeRapiServer(flowTest *testdata.FlowTest) *Server {
+	metadataService := lmds.NewService("test-token")
 	return NewServer(
 		"127.0.0.1",
 		0,
@@ -197,6 +209,7 @@ func makeRapiServer(flowTest *testdata.FlowTest) *Server {
 		&telemetry.NoOpSubscriptionAPI{},
 		flowTest.TelemetrySubscription,
 		flowTest.CredentialsService,
+		metadataService,
 	)
 }
 
@@ -336,7 +349,11 @@ func assertInvocationResponseTooLarge(t *testing.T, responseRecorder *httptest.R
 	assert.NotNil(t, errorResponse)
 	assert.Nil(t, flowTest.InteropServer.Response)
 	assert.Equal(t, fatalerror.FunctionOversizedResponse, errorResponse.FunctionError.Type)
+<<<<<<< HEAD
 	assert.Equal(t, fmt.Sprintf("Response payload size exceeded maximum allowed payload size (6291556 bytes)."), errorResponse.FunctionError.Message)
+=======
+	assert.Equal(t, "Response payload size exceeded maximum allowed payload size (6291556 bytes).", errorResponse.FunctionError.Message)
+>>>>>>> 391c3f1d
 
 	var errorPayload map[string]interface{}
 	assert.NoError(t, json.Unmarshal(errorResponse.Payload, &errorPayload))

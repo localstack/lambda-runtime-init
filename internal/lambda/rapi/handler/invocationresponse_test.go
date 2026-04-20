@@ -20,6 +20,13 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
 	"github.com/stretchr/testify/assert"
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
+>>>>>>> 391c3f1d
 )
 
 func TestResponseTooLarge(t *testing.T) {

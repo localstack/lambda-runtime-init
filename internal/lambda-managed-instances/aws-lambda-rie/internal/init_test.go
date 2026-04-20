@@ -62,7 +62,11 @@ func Test_getInitRequestMessage(t *testing.T) {
 				XrayTracingMode:      intmodel.XRayTracingModePassThrough,
 				CurrentWorkingDir:    "REPLACE",
 				RuntimeBinaryCommand: []string{"/path/to/bootstrap"},
+<<<<<<< HEAD
 				AvailabilityZoneId:   "",
+=======
+				AvailabilityZoneId:   "use1-az1",
+>>>>>>> 391c3f1d
 				AmiId:                "",
 			},
 		},
@@ -116,7 +120,11 @@ func Test_getInitRequestMessage(t *testing.T) {
 				XrayTracingMode:      intmodel.XRayTracingModePassThrough,
 				CurrentWorkingDir:    "/var/task",
 				RuntimeBinaryCommand: []string{"/custom/bootstrap", "custom_handler"},
+<<<<<<< HEAD
 				AvailabilityZoneId:   "",
+=======
+				AvailabilityZoneId:   "use1-az1",
+>>>>>>> 391c3f1d
 				AmiId:                "",
 			},
 		},

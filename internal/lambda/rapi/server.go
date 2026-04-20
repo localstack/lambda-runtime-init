@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+<<<<<<< HEAD
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core"
@@ -21,7 +22,16 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/rendering"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 
+=======
+>>>>>>> 391c3f1d
 	log "github.com/sirupsen/logrus"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/rendering"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 )
 
 const version20180601 = "/2018-06-01"
@@ -60,6 +70,7 @@ func NewServer(
 	logsSubscriptionAPI telemetry.SubscriptionAPI,
 	telemetrySubscriptionAPI telemetry.SubscriptionAPI,
 	credentialsService core.CredentialsService,
+	metadataService *lmds.Service,
 ) *Server {
 
 	exitErrors := make(chan error, 1)
@@ -80,6 +91,8 @@ func NewServer(
 	if appctx.LoadInitType(appCtx) == appctx.InitCaching {
 		router.Mount(version20210423, CredentialsAPIRouter(credentialsService))
 	}
+
+	router.Mount(lmds.URIPath, http.MaxBytesHandler(metadataService, 0))
 
 	return &Server{
 		host:     host,

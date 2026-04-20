@@ -119,7 +119,11 @@ func (m *shutdownMetrics) buildMetrics() {
 		switch key := metric.metricName; {
 		case key == interop.TotalDurationMetric:
 			totalDuration = metric.duration
+<<<<<<< HEAD
 		case key == interop.ShutdownRuntimeDuration, key == interop.ShutdownExtensionsDuration, key == interop.ShutdownWaitAllProcessesDuration, m.killProcessDurationRegex.MatchString(key):
+=======
+		case key == interop.ShutdownRuntimeDuration, key == interop.ShutdownExtensionsDuration, key == interop.ShutdownWaitAllProcessesDuration, key == interop.ShutdownAbortInvokesDurationMetric, m.killProcessDurationRegex.MatchString(key):
+>>>>>>> 391c3f1d
 			sumCustomerDuration += metric.duration
 		}
 

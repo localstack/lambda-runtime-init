@@ -11,6 +11,11 @@ import (
 	"net/netip"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+>>>>>>> 391c3f1d
 	intmodel "github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/model"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/rapid/model"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/servicelogs"
@@ -151,6 +156,26 @@ type HealthCheckResponse interface {
 func (HealthyContainerResponse) healthCheckResponse()   {}
 func (UnhealthyContainerResponse) healthCheckResponse() {}
 
+<<<<<<< HEAD
+=======
+type ReserveIdleRuntimeRequest interface {
+	InvokeID() InvokeID
+}
+
+type ReserveIdleRuntimeResponse interface {
+	reserveIdleRuntimeResponse()
+}
+
+type ReserveIdleRuntimeSuccessResponse struct{}
+
+type ReserveIdleRuntimeFailureResponse struct {
+	ErrorType model.ErrorType
+}
+
+func (ReserveIdleRuntimeSuccessResponse) reserveIdleRuntimeResponse() {}
+func (ReserveIdleRuntimeFailureResponse) reserveIdleRuntimeResponse() {}
+
+>>>>>>> 391c3f1d
 type InitExecutionData struct {
 	ExtensionEnv                 intmodel.KVMap
 	Runtime                      model.Runtime
@@ -161,6 +186,10 @@ type InitExecutionData struct {
 	RuntimeManagedLoggingFormats []supvmodel.ManagedLoggingFormat
 	StaticData                   EEStaticData
 	TelemetrySubscriptionConfig  TelemetrySubscriptionConfig
+<<<<<<< HEAD
+=======
+	Metadata                     lmds.MetadataConfig
+>>>>>>> 391c3f1d
 }
 
 func (i *InitExecutionData) FunctionARN() string {
@@ -311,6 +340,11 @@ type InvokeMetrics interface {
 
 	TriggerInvokeDone() (totalMs time.Duration, runMs *time.Duration, initData InitStaticDataProvider)
 
+<<<<<<< HEAD
+=======
+	SetReservationUsed(wasReserved bool)
+
+>>>>>>> 391c3f1d
 	SendInvokeStartEvent(*TracingCtx) error
 	SendInvokeFinishedEvent(tracingCtx *TracingCtx, xrayErrorCause json.RawMessage) error
 	SendMetrics(model.AppError) error

@@ -19,6 +19,10 @@ const (
 	InitOp     Operation = "Init"
 	InvokeOp   Operation = "Invoke"
 	ShutdownOp Operation = "Shutdown"
+<<<<<<< HEAD
+=======
+	ReserveOp  Operation = "Reserve"
+>>>>>>> 391c3f1d
 )
 
 type Tuple struct {

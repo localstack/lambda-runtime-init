@@ -1,8 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+<<<<<<< HEAD
 //go:build test
 
+=======
+>>>>>>> 391c3f1d
 package functional
 
 import (

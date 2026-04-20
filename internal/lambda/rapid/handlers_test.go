@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
@@ -29,8 +30,23 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
 
+=======
+>>>>>>> 391c3f1d
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/appctx"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/handler"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapi/rendering"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/env"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/supervisor/model"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/testdata"
 )
 
 func BenchmarkChannelsSelect10(b *testing.B) {
@@ -139,7 +155,8 @@ func TestListen(t *testing.T) {
 
 	ctx := context.Background()
 	telemetryAPIEnabled := true
-	server := rapi.NewServer("127.0.0.1", 0, flowTest.AppCtx, flowTest.RegistrationService, flowTest.RenderingService, telemetryAPIEnabled, flowTest.TelemetrySubscription, flowTest.TelemetrySubscription, flowTest.CredentialsService)
+	metadataService := lmds.NewService("test-token")
+	server := rapi.NewServer("127.0.0.1", 0, flowTest.AppCtx, flowTest.RegistrationService, flowTest.RenderingService, telemetryAPIEnabled, flowTest.TelemetrySubscription, flowTest.TelemetrySubscription, flowTest.CredentialsService, metadataService)
 	err := server.Listen()
 	assert.NoError(t, err)
 

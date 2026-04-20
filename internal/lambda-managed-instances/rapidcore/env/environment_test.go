@@ -16,6 +16,10 @@ func TestSetupEnvironment(t *testing.T) {
 	defaultRuntimeEnv := intmodel.KVMap{
 
 		AWS_ACCESS_KEY_ID:               "AKIAIOSFODNN7EXAMPLE",
+<<<<<<< HEAD
+=======
+		AWS_ACCOUNT_ID:                  "123456789012",
+>>>>>>> 391c3f1d
 		AWS_DEFAULT_REGION:              "us-west-2",
 		AWS_LAMBDA_FUNCTION_MEMORY_SIZE: "3008",
 		AWS_LAMBDA_FUNCTION_NAME:        "test_function",
@@ -24,6 +28,11 @@ func TestSetupEnvironment(t *testing.T) {
 		AWS_SECRET_ACCESS_KEY:           "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		AWS_SESSION_TOKEN:               "FwoGZXIvYXdzEMj//////////wEaDM1Qz0oN8BNwV9GqyyLVAebxhwq9ZGqojXZe1UTJkzK6F9V+VZHhT5JSWYzJUKEwOqOkQyQXJpfJsYHfkJEXtR6Kh9mXnEbqKi",
 		AWS_LAMBDA_INITIALIZATION_TYPE:  "lambda-managed-instances",
+<<<<<<< HEAD
+=======
+		AWS_LAMBDA_METADATA_API:         "127.0.0.1:9001",
+		AWS_LAMBDA_METADATA_TOKEN:       "test-token",
+>>>>>>> 391c3f1d
 		AWS_LAMBDA_RUNTIME_API:          "127.0.0.1:9001",
 		HANDLER:                         "lambda_function.lambda_handler",
 		LANG:                            "en_US.UTF-8",
@@ -48,16 +57,29 @@ func TestSetupEnvironment(t *testing.T) {
 	defaultExtensionEnv := intmodel.KVMap{
 
 		AWS_ACCESS_KEY_ID:               "AKIAIOSFODNN7EXAMPLE",
+<<<<<<< HEAD
+=======
+		AWS_ACCOUNT_ID:                  "123456789012",
+>>>>>>> 391c3f1d
 		AWS_DEFAULT_REGION:              "us-west-2",
 		AWS_LAMBDA_FUNCTION_MEMORY_SIZE: "3008",
 		AWS_LAMBDA_FUNCTION_NAME:        "test_function",
 		AWS_LAMBDA_FUNCTION_VERSION:     "$LATEST",
 		AWS_LAMBDA_LOG_FORMAT:           "json",
 		AWS_LAMBDA_LOG_LEVEL:            "info",
+<<<<<<< HEAD
+=======
+		AWS_LAMBDA_MAX_CONCURRENCY:      "1",
+>>>>>>> 391c3f1d
 		AWS_REGION:                      "us-west-2",
 		AWS_SECRET_ACCESS_KEY:           "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		AWS_SESSION_TOKEN:               "FwoGZXIvYXdzEMj//////////wEaDM1Qz0oN8BNwV9GqyyLVAebxhwq9ZGqojXZe1UTJkzK6F9V+VZHhT5JSWYzJUKEwOqOkQyQXJpfJsYHfkJEXtR6Kh9mXnEbqKi",
 		AWS_LAMBDA_INITIALIZATION_TYPE:  "lambda-managed-instances",
+<<<<<<< HEAD
+=======
+		AWS_LAMBDA_METADATA_API:         "127.0.0.1:9001",
+		AWS_LAMBDA_METADATA_TOKEN:       "test-token",
+>>>>>>> 391c3f1d
 		AWS_LAMBDA_RUNTIME_API:          "127.0.0.1:9001",
 		LANG:                            "en_US.UTF-8",
 		LD_LIBRARY_PATH:                 "/var/lang/lib:/lib64:/usr/lib64:/var/runtime:/var/runtime/lib:/var/task:/var/task/lib:/opt/lib",
@@ -151,6 +173,10 @@ func TestSetupEnvironment(t *testing.T) {
 				return customerEnvVars
 			}())),
 			wantRuntimeEnv: func(env intmodel.KVMap) intmodel.KVMap {
+<<<<<<< HEAD
+=======
+				env[AWS_ACCOUNT_ID] = "customer_AWS_ACCOUNT_ID"
+>>>>>>> 391c3f1d
 				env[AWS_LAMBDA_LOG_FORMAT] = "customer_AWS_LAMBDA_LOG_FORMAT"
 				env[AWS_LAMBDA_LOG_LEVEL] = "customer_AWS_LAMBDA_LOG_LEVEL"
 				env[AWS_XRAY_CONTEXT_MISSING] = "customer_AWS_XRAY_CONTEXT_MISSING"
@@ -162,6 +188,10 @@ func TestSetupEnvironment(t *testing.T) {
 				return env
 			},
 			wantExtensionEnv: func(env intmodel.KVMap) intmodel.KVMap {
+<<<<<<< HEAD
+=======
+				env[AWS_ACCOUNT_ID] = "customer_AWS_ACCOUNT_ID"
+>>>>>>> 391c3f1d
 				env[AWS_LAMBDA_LOG_FORMAT] = "customer_AWS_LAMBDA_LOG_FORMAT"
 				env[AWS_LAMBDA_LOG_LEVEL] = "customer_AWS_LAMBDA_LOG_LEVEL"
 				env[AWS_XRAY_CONTEXT_MISSING] = "customer_AWS_XRAY_CONTEXT_MISSING"
@@ -190,6 +220,10 @@ func TestSetupEnvironment(t *testing.T) {
 				delete(env, HANDLER)
 				env[AWS_EXECUTION_ENV] = "AWS_Lambda_Image"
 
+<<<<<<< HEAD
+=======
+				env[AWS_ACCOUNT_ID] = "customer_AWS_ACCOUNT_ID"
+>>>>>>> 391c3f1d
 				env[AWS_LAMBDA_LOG_FORMAT] = "customer_AWS_LAMBDA_LOG_FORMAT"
 				env[AWS_LAMBDA_LOG_LEVEL] = "customer_AWS_LAMBDA_LOG_LEVEL"
 				env[AWS_XRAY_CONTEXT_MISSING] = "customer_AWS_XRAY_CONTEXT_MISSING"
@@ -201,6 +235,10 @@ func TestSetupEnvironment(t *testing.T) {
 				return env
 			},
 			wantExtensionEnv: func(env intmodel.KVMap) intmodel.KVMap {
+<<<<<<< HEAD
+=======
+				env[AWS_ACCOUNT_ID] = "customer_AWS_ACCOUNT_ID"
+>>>>>>> 391c3f1d
 				env[AWS_LAMBDA_LOG_FORMAT] = "customer_AWS_LAMBDA_LOG_FORMAT"
 				env[AWS_LAMBDA_LOG_LEVEL] = "customer_AWS_LAMBDA_LOG_LEVEL"
 				env[AWS_XRAY_CONTEXT_MISSING] = "customer_AWS_XRAY_CONTEXT_MISSING"
@@ -222,7 +260,11 @@ func TestSetupEnvironment(t *testing.T) {
 				tt.wantExtensionEnv = func(extensionEnv intmodel.KVMap) intmodel.KVMap { return extensionEnv }
 			}
 
+<<<<<<< HEAD
 			gotRuntimeEnv, gotExtensionEnv := SetupEnvironment(&tt.initMsg, "127.0.0.1:9001", tt.runtimeLoggingSocket)
+=======
+			gotRuntimeEnv, gotExtensionEnv := SetupEnvironment(&tt.initMsg, "127.0.0.1:9001", tt.runtimeLoggingSocket, "127.0.0.1:9001", "test-token")
+>>>>>>> 391c3f1d
 			assert.Equal(t, tt.wantRuntimeEnv(clone(defaultRuntimeEnv)), gotRuntimeEnv)
 			assert.Equal(t, tt.wantExtensionEnv(clone(defaultExtensionEnv)), gotExtensionEnv)
 		})

@@ -60,7 +60,15 @@ func (h *HTTPHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+<<<<<<< HEAD
 	invokeReq := rieinvoke.NewRieInvokeRequest(r, w)
+=======
+	invokeReq, err := rieinvoke.NewRieInvokeRequest(r, w)
+	if err != nil {
+		h.respondWithError(w, err)
+		return
+	}
+>>>>>>> 391c3f1d
 	ctx := logging.WithInvokeID(r.Context(), invokeReq.InvokeID())
 
 	metrics := invoke.NewInvokeMetrics(nil, &noOpCounter{})

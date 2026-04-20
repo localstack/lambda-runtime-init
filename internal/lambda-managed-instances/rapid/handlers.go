@@ -352,6 +352,11 @@ func doInitRuntime(
 }
 
 func handleInit(ctx context.Context, execCtx *rapidContext) rapidmodel.AppError {
+<<<<<<< HEAD
+=======
+	execCtx.server.MetadataService.UpdateMetadata(execCtx.initExecutionData.Metadata)
+
+>>>>>>> 391c3f1d
 	execCtx.registrationService.SetFunctionMetadata(execCtx.initExecutionData.FunctionMetadata)
 	if err := setupEventsWatcher(ctx, execCtx); err != nil {
 		return rapidmodel.WrapErrorIntoPlatformFatalError(err, rapidmodel.ErrSandboxEventSetupFailure)

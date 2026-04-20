@@ -61,8 +61,14 @@ func GetInitRequestMessage(fileUtil utils.FileUtil, args []string) (intmodel.Ini
 		XrayTracingMode:      intmodel.XRayTracingModePassThrough,
 		CurrentWorkingDir:    cwd,
 		RuntimeBinaryCommand: cmd,
+<<<<<<< HEAD
 		AvailabilityZoneId:   "",
 		AmiId:                "",
+=======
+
+		AvailabilityZoneId: "use1-az1",
+		AmiId:              "",
+>>>>>>> 391c3f1d
 	}, nil
 }
 

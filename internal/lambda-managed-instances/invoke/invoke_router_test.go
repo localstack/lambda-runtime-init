@@ -103,6 +103,11 @@ func TestInvokeSuccess(t *testing.T) {
 		<-respChannel
 	}).Return(nil)
 
+<<<<<<< HEAD
+=======
+	mocks.invokeMetrics.On("SetReservationUsed", false)
+
+>>>>>>> 391c3f1d
 	mocks.runtimeRespReq.On("InvokeID").Return("123456")
 	mocks.runnningInvoke.On("RuntimeResponse", mock.Anything, &mocks.runtimeRespReq).Return(nil)
 
@@ -160,6 +165,10 @@ func TestInvokeFailure_DublicatedInvokeId(t *testing.T) {
 	respChannel := make(chan time.Time)
 
 	mocks.invokeMetrics.On("UpdateConcurrencyMetrics", mock.AnythingOfType("int"), mock.AnythingOfType("int")).Twice()
+<<<<<<< HEAD
+=======
+	mocks.invokeMetrics.On("SetReservationUsed", mock.AnythingOfType("bool")).Maybe()
+>>>>>>> 391c3f1d
 
 	mocks.eaInvokeRequest.On("InvokeID").Return("123456")
 	mocks.runnningInvoke.On("RunInvokeAndSendResult", mock.Anything, &mocks.staticData, &mocks.eaInvokeRequest, mock.Anything).Return(nil).WaitUntil(respChannel).Once()
@@ -190,7 +199,11 @@ func TestInvokeFailure_DublicatedInvokeId(t *testing.T) {
 
 	err = <-ch
 	assert.Error(t, err)
+<<<<<<< HEAD
 	assert.Equal(t, model.ErrorDublicatedInvokeId, err.ErrorType())
+=======
+	assert.Equal(t, model.ErrorDuplicatedInvokeId, err.ErrorType())
+>>>>>>> 391c3f1d
 
 	close(respChannel)
 	err = <-ch
@@ -303,8 +316,13 @@ func TestAbortRunningInvokes(t *testing.T) {
 	mockRunningInvoke1 := newMockRunningInvoke(t)
 	mockRunningInvoke2 := newMockRunningInvoke(t)
 
+<<<<<<< HEAD
 	router.idleRuntimes <- idleRuntime1
 	router.idleRuntimes <- idleRuntime2
+=======
+	require.NoError(t, router.runtimePool.Add(idleRuntime1))
+	require.NoError(t, router.runtimePool.Add(idleRuntime2))
+>>>>>>> 391c3f1d
 
 	mockRunningInvoke1.On("CancelAsync", eaGracefulShutdownErr).Return()
 	mockRunningInvoke2.On("CancelAsync", eaGracefulShutdownErr).Return()
@@ -335,6 +353,7 @@ func TestInvokeRouter_Counters(t *testing.T) {
 
 	mockRunningInvoke1 := newMockRunningInvoke(t)
 
+<<<<<<< HEAD
 	router.idleRuntimes <- idleRuntime1
 	router.idleRuntimes <- idleRuntime2
 
@@ -343,3 +362,153 @@ func TestInvokeRouter_Counters(t *testing.T) {
 	assert.Equal(t, 2, router.GetIdleRuntimesCount())
 	assert.Equal(t, 1, router.GetRunningInvokesCount())
 }
+=======
+	require.NoError(t, router.runtimePool.Add(idleRuntime1))
+	require.NoError(t, router.runtimePool.Add(idleRuntime2))
+
+	router.runningInvokes.Set("1", mockRunningInvoke1)
+
+	assert.Equal(t, 2, router.GetRuntimePoolCounts().Idle)
+	assert.Equal(t, 1, router.GetRunningInvokesCount())
+}
+
+func TestReserveIdleRuntime_Success(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Once()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	resp, appErr := router.ReserveIdleRuntime(mocks.ctx, "reserve-success-1", 100*time.Millisecond)
+	require.Nil(t, appErr)
+	_, ok := resp.(interop.ReserveIdleRuntimeSuccessResponse)
+	assert.True(t, ok, "expected ReserveIdleRuntimeSuccessResponse")
+}
+
+func TestReserveIdleRuntime_NoIdleRuntimes(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	resp, appErr := router.ReserveIdleRuntime(mocks.ctx, "reserve-no-idle", 100*time.Millisecond)
+	require.NotNil(t, appErr)
+	failResp, ok := resp.(interop.ReserveIdleRuntimeFailureResponse)
+	assert.True(t, ok, "expected ReserveIdleRuntimeFailureResponse")
+	assert.Equal(t, model.ErrorRuntimeUnavailable, failResp.ErrorType)
+	assert.Equal(t, model.ErrorRuntimeUnavailable, appErr.ErrorType())
+}
+
+func TestReserveIdleRuntime_DuplicateInvokeID(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Twice()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+	_, err = router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	resp, appErr := router.ReserveIdleRuntime(mocks.ctx, "reserve-dup", 100*time.Millisecond)
+	require.Nil(t, appErr)
+	_, ok := resp.(interop.ReserveIdleRuntimeSuccessResponse)
+	assert.True(t, ok, "expected ReserveIdleRuntimeSuccessResponse")
+
+	resp, appErr = router.ReserveIdleRuntime(mocks.ctx, "reserve-dup", 100*time.Millisecond)
+	require.NotNil(t, appErr)
+	failResp, ok := resp.(interop.ReserveIdleRuntimeFailureResponse)
+	assert.True(t, ok, "expected ReserveIdleRuntimeFailureResponse")
+	assert.Equal(t, model.ErrorDuplicatedInvokeId, failResp.ErrorType)
+	assert.Equal(t, model.ErrorDuplicatedInvokeId, appErr.ErrorType())
+}
+
+func TestReserveIdleRuntime_Expiration(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Once()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	_, appErr := router.ReserveIdleRuntime(mocks.ctx, "reserve-expire", 30*time.Millisecond)
+	require.Nil(t, appErr)
+
+	assert.Equal(t, 1, router.runtimePool.ReservedCount())
+
+	time.Sleep(80 * time.Millisecond)
+
+	assert.Equal(t, 0, router.runtimePool.ReservedCount())
+	assert.Equal(t, 1, router.runtimePool.Counts().Total)
+}
+
+func TestReserveIdleRuntime_InvokeConsumesReservation(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Once()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	_, appErr := router.ReserveIdleRuntime(mocks.ctx, "reserve-then-invoke", 500*time.Millisecond)
+	require.Nil(t, appErr)
+
+	mocks.invokeMetrics.On("UpdateConcurrencyMetrics", mock.AnythingOfType("int"), mock.AnythingOfType("int"))
+	mocks.invokeMetrics.On("SetReservationUsed", true)
+	mocks.eaInvokeRequest.On("InvokeID").Return("reserve-then-invoke")
+	mocks.runnningInvoke.On("RunInvokeAndSendResult", mock.Anything, &mocks.staticData, &mocks.eaInvokeRequest, mock.Anything).Return(nil)
+
+	invokeErr, wasResponseSent := router.Invoke(mocks.ctx, &mocks.staticData, &mocks.eaInvokeRequest, &mocks.invokeMetrics)
+	assert.NoError(t, invokeErr)
+	assert.True(t, wasResponseSent)
+
+	assert.Equal(t, 0, router.runtimePool.ReservedCount())
+	assert.Equal(t, 0, router.runtimePool.Counts().Total)
+}
+
+func TestReserveIdleRuntime_InvokeWithoutReservation(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Once()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	mocks.invokeMetrics.On("UpdateConcurrencyMetrics", mock.AnythingOfType("int"), mock.AnythingOfType("int"))
+	mocks.invokeMetrics.On("SetReservationUsed", false)
+	mocks.eaInvokeRequest.On("InvokeID").Return("no-reservation-invoke")
+	mocks.runnningInvoke.On("RunInvokeAndSendResult", mock.Anything, &mocks.staticData, &mocks.eaInvokeRequest, mock.Anything).Return(nil)
+
+	invokeErr, wasResponseSent := router.Invoke(mocks.ctx, &mocks.staticData, &mocks.eaInvokeRequest, &mocks.invokeMetrics)
+	assert.NoError(t, invokeErr)
+	assert.True(t, wasResponseSent)
+}
+
+func TestReserveIdleRuntime_GetIdleRuntimesCount_ExcludesReserved(t *testing.T) {
+	t.Parallel()
+
+	mocks, router := createMocksAndInitRouter()
+
+	mocks.runnningInvoke.On("RuntimeNextWait", mock.Anything).Return(nil).Twice()
+	_, err := router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+	_, err = router.RuntimeNext(mocks.ctx, mocks.runtimeNextRequest)
+	require.NoError(t, err)
+
+	counts := router.GetRuntimePoolCounts()
+	assert.Equal(t, 2, counts.Idle)
+	assert.Equal(t, 0, counts.Reserved)
+
+	_, appErr := router.ReserveIdleRuntime(mocks.ctx, "count-test", 500*time.Millisecond)
+	require.Nil(t, appErr)
+
+	counts = router.GetRuntimePoolCounts()
+	assert.Equal(t, 1, counts.Idle)
+	assert.Equal(t, 1, counts.Reserved)
+	assert.Equal(t, 2, counts.Total)
+}
+>>>>>>> 391c3f1d

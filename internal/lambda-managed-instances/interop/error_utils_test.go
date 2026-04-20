@@ -18,22 +18,38 @@ func TestBuildStatusFromError(t *testing.T) {
 		expected ResponseStatus
 	}{
 		{
+<<<<<<< HEAD
 			name:     "nil error",
+=======
+			name:     "nilError",
+>>>>>>> 391c3f1d
 			err:      nil,
 			expected: Success,
 		},
 		{
+<<<<<<< HEAD
 			name:     "sandbox timeout error",
+=======
+			name:     "sandboxTimeoutError",
+>>>>>>> 391c3f1d
 			err:      model.NewCustomerError(model.ErrorSandboxTimedout),
 			expected: Timeout,
 		},
 		{
+<<<<<<< HEAD
 			name:     "customer error",
+=======
+			name:     "customerError",
+>>>>>>> 391c3f1d
 			err:      model.NewCustomerError(model.ErrorFunctionUnknown),
 			expected: Error,
 		},
 		{
+<<<<<<< HEAD
 			name:     "runtime error",
+=======
+			name:     "platformError",
+>>>>>>> 391c3f1d
 			err:      model.NewPlatformError(nil, model.ErrorReasonUnknownError),
 			expected: Failure,
 		},

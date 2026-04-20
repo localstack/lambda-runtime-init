@@ -8,6 +8,11 @@ import (
 	"log/slog"
 	"net/netip"
 
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+
+>>>>>>> 391c3f1d
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/appctx"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/core"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/interop"
@@ -21,7 +26,11 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/utils"
 )
 
+<<<<<<< HEAD
 const MaxIdleRuntimesQueueSize = 10_000
+=======
+const RuntimePoolSize = 10_000
+>>>>>>> 391c3f1d
 
 type Dependencies struct {
 	InteropServer            interop.Server
@@ -31,6 +40,10 @@ type Dependencies struct {
 	Supervisor               supvmodel.ProcessSupervisor
 	FileUtils                utils.FileUtil
 	InvokeRouter             *invoke.InvokeRouter
+<<<<<<< HEAD
+=======
+	MetadataService          *lmds.Service
+>>>>>>> 391c3f1d
 
 	RuntimeAPIAddrPort netip.AddrPort
 }
@@ -42,7 +55,11 @@ func Start(ctx context.Context, deps Dependencies) (interop.RapidContext, error)
 	registrationService := core.NewRegistrationService(initFlow)
 	renderingService := rendering.NewRenderingService()
 
+<<<<<<< HEAD
 	server, err := rapi.NewServer(deps.RuntimeAPIAddrPort, appCtx, registrationService, renderingService, deps.TelemetrySubscriptionAPI, deps.InvokeRouter)
+=======
+	server, err := rapi.NewServer(deps.RuntimeAPIAddrPort, appCtx, registrationService, renderingService, deps.TelemetrySubscriptionAPI, deps.InvokeRouter, deps.MetadataService)
+>>>>>>> 391c3f1d
 	if err != nil {
 		return nil, err
 	}
@@ -120,12 +137,23 @@ func (r *rapidContext) HandleShutdown(shutdownCause model.AppError, metrics inte
 	if err != nil {
 
 		slog.Warn("Error during shutdown Context shutdown", "err", err)
+<<<<<<< HEAD
 		return model.WrapErrorIntoPlatformFatalError(err, model.ErrSandboxShutdownFailed)
 	}
 
 	duration := metrics.CreateDurationMetric(interop.ShutdownRuntimeServerDuration)
 	if err := r.server.Shutdown(); err != nil {
 		slog.Error("Error during runtime server shutdown", "err", err)
+=======
+
+		return nil
+	}
+
+	duration := metrics.CreateDurationMetric(interop.ShutdownRuntimeServerDuration)
+
+	if err := r.server.Close(); err != nil {
+		slog.Error("Error during runtime server close", "err", err)
+>>>>>>> 391c3f1d
 	}
 	duration.Done()
 

@@ -12,6 +12,10 @@ import (
 	"net/netip"
 
 	"github.com/go-chi/chi"
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+>>>>>>> 391c3f1d
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/appctx"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/core"
@@ -29,6 +33,10 @@ const (
 const requestBodyLimitBytes int64 = 1 * 1024 * 1024
 
 type Server struct {
+<<<<<<< HEAD
+=======
+	MetadataService    *lmds.Service
+>>>>>>> 391c3f1d
 	runtimeAPIAddrPort netip.AddrPort
 	server             *http.Server
 	listener           net.Listener
@@ -46,6 +54,10 @@ func NewServer(
 	renderingService *rendering.EventRenderingService,
 	telemetrySubscriptionAPI telemetry.SubscriptionAPI,
 	runtimeReqHandler runtimeRequestHandler,
+<<<<<<< HEAD
+=======
+	metadataService *lmds.Service,
+>>>>>>> 391c3f1d
 ) (*Server, error) {
 	exitErrors := make(chan error, 1)
 
@@ -55,12 +67,21 @@ func NewServer(
 
 	router.Mount(version20220701, http.MaxBytesHandler(TelemetryAPIRouter(registrationService, telemetrySubscriptionAPI), requestBodyLimitBytes))
 
+<<<<<<< HEAD
+=======
+	router.Mount(lmds.URIPath, http.MaxBytesHandler(metadataService, 0))
+
+>>>>>>> 391c3f1d
 	listener, err := net.Listen("tcp", runtimeAPIAddrPort.String())
 	if err != nil {
 		return nil, err
 	}
 
 	return &Server{
+<<<<<<< HEAD
+=======
+		MetadataService:    metadataService,
+>>>>>>> 391c3f1d
 		listener:           listener,
 		runtimeAPIAddrPort: netip.MustParseAddrPort(listener.Addr().String()),
 

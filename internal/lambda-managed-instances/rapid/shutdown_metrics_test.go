@@ -70,7 +70,11 @@ func Test_shutdownMetrics(t *testing.T) {
 				{Type: servicelogs.TimerType, Key: "KillruntimeDuration", Value: 1000000},
 				{Type: servicelogs.TimerType, Key: "WaitCustomerProcessesExitDuration", Value: 2000000},
 				{Type: servicelogs.TimerType, Key: "ShutdownRuntimeServerDuration", Value: 1000000},
+<<<<<<< HEAD
 				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 2000000},
+=======
+				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 1000000},
+>>>>>>> 391c3f1d
 				{Type: servicelogs.CounterType, Key: "TotalExtensionsCount", Value: 0},
 				{Type: servicelogs.CounterType, Key: "InternalExtensionsCount", Value: 0},
 				{Type: servicelogs.CounterType, Key: "ExternalExtensionsCount", Value: 0},
@@ -109,7 +113,11 @@ func Test_shutdownMetrics(t *testing.T) {
 				{Type: servicelogs.TimerType, Key: "StopRuntimeDuration", Value: 1000000},
 				{Type: servicelogs.TimerType, Key: "WaitCustomerProcessesExitDuration", Value: 2000000},
 				{Type: servicelogs.TimerType, Key: "ShutdownRuntimeServerDuration", Value: 1000000},
+<<<<<<< HEAD
 				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 2000000},
+=======
+				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 1000000},
+>>>>>>> 391c3f1d
 				{Type: servicelogs.CounterType, Key: "TotalExtensionsCount", Value: 5},
 				{Type: servicelogs.CounterType, Key: "InternalExtensionsCount", Value: 2},
 				{Type: servicelogs.CounterType, Key: "ExternalExtensionsCount", Value: 3},
@@ -156,7 +164,11 @@ func Test_shutdownMetrics(t *testing.T) {
 				{Type: servicelogs.TimerType, Key: "TotalDuration", Value: 2000000},
 				{Type: servicelogs.TimerType, Key: "AbortInvokeDuration", Value: 1000000},
 				{Type: servicelogs.TimerType, Key: "ShutdownRuntimeServerDuration", Value: 1000000},
+<<<<<<< HEAD
 				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 2000000},
+=======
+				{Type: servicelogs.TimerType, Key: "PlatformOverheadDuration", Value: 1000000},
+>>>>>>> 391c3f1d
 				{Type: servicelogs.CounterType, Key: "TotalExtensionsCount", Value: 5},
 				{Type: servicelogs.CounterType, Key: "InternalExtensionsCount", Value: 2},
 				{Type: servicelogs.CounterType, Key: "ExternalExtensionsCount", Value: 3},

@@ -17,11 +17,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lmds"
+>>>>>>> 391c3f1d
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/appctx"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/core"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/interop"
 	internalmodel "github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/model"
+<<<<<<< HEAD
+=======
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/rapi"
+>>>>>>> 391c3f1d
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/rapi/rendering"
 	rapidmodel "github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/rapid/model"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda-managed-instances/rapidcore/env"
@@ -98,7 +106,11 @@ func makeRapidTestEnv() (runtimeEnv internalmodel.KVMap, extensionEnv internalmo
 		EnvVars:         make(map[string]string),
 	}
 
+<<<<<<< HEAD
 	return env.SetupEnvironment(config, "host:port", "/path")
+=======
+	return env.SetupEnvironment(config, "host:port", "/path", "host:port", "test-token")
+>>>>>>> 391c3f1d
 }
 
 func makeFileUtils(withExtensions bool) *utils.MockFileUtil {
@@ -131,8 +143,27 @@ func makeRapidContext(appCtx appctx.ApplicationContext, initFlow core.InitFlowSy
 	}
 	runtime.SetState(runtime.RuntimeReadyState)
 
+<<<<<<< HEAD
 	rapidCtx := &rapidContext{
 
+=======
+	server, err := rapi.NewServer(
+		netip.MustParseAddrPort("127.0.0.1:0"),
+		appCtx,
+		registrationService,
+		nil,
+		nil,
+		nil,
+		lmds.NewService("test-token"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	rapidCtx := &rapidContext{
+
+		server:                   server,
+>>>>>>> 391c3f1d
 		appCtx:                   appCtx,
 		initFlow:                 initFlow,
 		registrationService:      registrationService,
