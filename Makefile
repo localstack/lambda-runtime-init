@@ -12,7 +12,8 @@ GO_ARCH_arm64 := arm64
 DESTINATION_x86_64 := bin/${BINARY_NAME}-x86_64
 DESTINATION_arm64 := bin/${BINARY_NAME}-arm64
 
-run_in_docker = docker run --env GOPROXY=direct -v $(shell pwd):/LambdaRuntimeLocal -w /LambdaRuntimeLocal golang:1.26.1 $(1)
+GO_VERSION := $(shell grep '^go ' go.mod | awk '{print $$2}')
+run_in_docker = docker run --env GOPROXY=direct -v $(shell pwd):/LambdaRuntimeLocal -w /LambdaRuntimeLocal golang:$(GO_VERSION) $(1)
 
 compile-with-docker-all:
 	$(call run_in_docker, make compile-lambda-linux-all)

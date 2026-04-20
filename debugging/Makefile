@@ -1,5 +1,6 @@
 # Golang EOL overview: https://endoflife.date/go
-DOCKER_GOLANG_IMAGE ?= golang:1.26.1-bookworm
+GO_VERSION := $(shell grep '^go ' ../go.mod | awk '{print $$2}')
+DOCKER_GOLANG_IMAGE ?= golang:$(GO_VERSION)-bookworm
 
 # On ARM hosts, use: make ARCH=arm64 build-init
 # Check host architecture: uname -m
