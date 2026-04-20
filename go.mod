@@ -1,6 +1,6 @@
 module github.com/aws/aws-lambda-runtime-interface-emulator
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/aws/aws-lambda-go v1.52.0

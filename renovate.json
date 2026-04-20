@@ -12,11 +12,6 @@
       "groupName": "Go toolchain"
     },
     {
-      "matchManagers": ["github-actions"],
-      "matchDepNames": ["go"],
-      "groupName": "Go toolchain"
-    },
-    {
       "matchManagers": ["gomod"],
       "excludePackageNames": ["go"],
       "matchUpdateTypes": ["minor", "patch"],
