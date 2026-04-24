@@ -47,6 +47,7 @@ const (
 	ResponseThroughputMetric           = "ResponseThroughput"
 	InflightRequestCountMetric         = "InflightRequestCount"
 	IdleRuntimesCountMetric            = "IdleRuntimesCount"
+	ReserveUsedMetric                  = "ReservationUsed"
 )
 
 var invokeMetricsMissDepError = "Invoke metrics miss dependencies"
@@ -84,6 +85,8 @@ type invokeMetrics struct {
 
 	counter Counter
 
+	wasReserved bool
+
 	getCurrentTime func() time.Time
 }
 
@@ -112,6 +115,10 @@ func (e *invokeMetrics) TriggerGetRequest() {
 func (e *invokeMetrics) UpdateConcurrencyMetrics(inflightInvokes, idleRuntimesCount int) {
 	e.inflightInvokes = inflightInvokes
 	e.idleRuntimesCount = idleRuntimesCount
+}
+
+func (e *invokeMetrics) SetReservationUsed(wasReserved bool) {
+	e.wasReserved = wasReserved
 }
 
 func (e *invokeMetrics) TriggerStartRequest() {
@@ -310,6 +317,16 @@ func (e *invokeMetrics) buildMetrics() []servicelogs.Metric {
 		servicelogs.Counter(IdleRuntimesCountMetric, float64(e.idleRuntimesCount)),
 	}
 
+	if e.wasReserved {
+		metrics = append(metrics,
+			servicelogs.Counter(ReserveUsedMetric, 1),
+		)
+	} else {
+		metrics = append(metrics,
+			servicelogs.Counter(ReserveUsedMetric, 0),
+		)
+	}
+
 	if e.responseMetrics != nil {
 		metrics = append(metrics,
 			servicelogs.Counter(ResponsePayloadSizeBytesMetric, float64(e.responseMetrics.ProducedBytes)),
@@ -352,7 +369,8 @@ func (e *invokeMetrics) buildMetrics() []servicelogs.Metric {
 	switch e.error.(type) {
 	case model.ClientError:
 		clientErrCnt = 1
-		if e.error.ErrorType() != model.ErrorRuntimeUnavailable {
+		if e.error.ErrorType() != model.ErrorRuntimeUnavailable &&
+			e.error.ErrorType() != model.ErrorDuplicatedInvokeId {
 
 			nonCustomerErrCnt = 1
 		}
