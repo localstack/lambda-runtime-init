@@ -49,3 +49,42 @@ jobs:
         files: bin/*
         generate_release_notes: true
         prerelease: ${{ endsWith(github.ref, '-pre') }}
+
+    - name: Generate GitHub App token
+      id: app-token
+      if: github.event_name == 'pull_request'
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.LOCALSTACK_CI_APP_ID }}
+        private-key: ${{ secrets.LOCALSTACK_CI_APP_PRIVATE_KEY }}
+        owner: localstack
+        repositories: localstack-pro,lambda-runtime-init
+
+    - name: Publish CI pre-release
+      if: github.event_name == 'pull_request'
+      uses: softprops/action-gh-release@v3
+      with:
+        token: ${{ steps.app-token.outputs.token }}
+        tag_name: v0.0.0-ci-${{ github.sha }}
+        name: "CI build (${{ github.sha }})"
+        prerelease: true
+        files: bin/*
+
+    - name: Trigger Lambda tests in localstack-pro
+      if: github.event_name == 'pull_request'
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        RIE_SHA: ${{ github.sha }}
+      run: |
+        gh workflow run aws_tests-rie.yml \
+          --repo localstack/localstack-pro \
+          --ref main \
+          --field testEnvironmentVariables="LAMBDA_INIT_RELEASE_VERSION=v0.0.0-ci-${RIE_SHA}" \
+          --field rieCommitSha="${RIE_SHA}"
+
+        gh api repos/localstack/lambda-runtime-init/statuses/${RIE_SHA} \
+          --method POST \
+          --field state=pending \
+          --field context="localstack-pro / Lambda tests" \
+          --field description="Lambda tests triggered in localstack-pro" \
+          --field target_url="https://github.com/localstack/localstack-pro/actions"
