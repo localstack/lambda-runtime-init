@@ -66,16 +66,26 @@ func main() {
 func invokeLogsHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
 	log.Println(invokeId)
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.Error(err)
+	var logResponse LogResponse
+	if err := json.NewDecoder(r.Body).Decode(&logResponse); err != nil {
+		log.Error("invalid logs payload: ", err)
+	} else {
+		log.Println("log result: " + logResponse.Logs)
 	}
-	log.Println("log result: " + string(bodyBytes))
+	w.WriteHeader(http.StatusAccepted)
 }
 
+// InvokeRequest is sent by LocalStack to trigger an invocation.
 type InvokeRequest struct {
-	InvokeId string `json:"invoke-id"`
-	Payload  string `json:"payload"`
+	InvokeId           string `json:"invoke-id"`
+	InvokedFunctionArn string `json:"invoked-function-arn"`
+	Payload            string `json:"payload"`
+	TraceId            string `json:"trace-id"`
+}
+
+// LogResponse is sent by the runtime to report logs for a completed invocation.
+type LogResponse struct {
+	Logs string `json:"logs"`
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -87,10 +97,11 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 			invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: "12345", Payload: "{\"counter\":0}"})
 			_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err)
 			}
 		}()
 	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func invokeResponseHandler(w http.ResponseWriter, r *http.Request) {
@@ -101,9 +112,16 @@ func invokeResponseHandler(w http.ResponseWriter, r *http.Request) {
 		log.Error(err)
 	}
 	log.Println("result: " + string(bodyBytes))
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func invokeErrorHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
 	log.Println(invokeId)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Error(err)
+	}
+	log.Println("error result: " + string(bodyBytes))
+	w.WriteHeader(http.StatusAccepted)
 }
