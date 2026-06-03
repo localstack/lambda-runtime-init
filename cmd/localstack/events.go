@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone/telemetry"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 )
 
 // LocalStackEventsAPI intercepts fault events and forwards them to LocalStack as error status callbacks.
@@ -34,7 +35,7 @@ func (ev *LocalStackEventsAPI) SendFault(data interop.FaultData) error {
 		ev.mu.RUnlock()
 	}
 
-	resp := ErrorResponse{
+	resp := lsapi.ErrorResponse{
 		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", requestID, data.ErrorMessage),
 		ErrorType:    string(data.ErrorType),
 	}

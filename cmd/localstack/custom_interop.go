@@ -82,6 +82,7 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return err
 }
 
+
 func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
 		delegate:          delegate.(*rapidcore.Server),
@@ -220,10 +221,11 @@ func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeRes
 		return c.delegate.SendInitErrorResponse(resp)
 	}
 
+	requestId := c.delegate.GetCurrentInvokeID()
 	adaptedResp := lsapi.ErrorResponse{
 		ErrorMessage: parsed.ErrorMessage,
 		ErrorType:    parsed.ErrorType,
-		RequestId:    c.delegate.GetCurrentInvokeID(),
+		RequestId:    &requestId,
 		StackTrace:   parsed.StackTrace,
 	}
 	body, err := json.Marshal(adaptedResp)

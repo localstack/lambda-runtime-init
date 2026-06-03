@@ -17,6 +17,8 @@ type LogResponse struct {
 type ErrorResponse struct {
 	ErrorMessage string   `json:"errorMessage"`
 	ErrorType    string   `json:"errorType,omitempty"`
-	RequestId    string   `json:"requestId,omitempty"`
-	StackTrace   []string `json:"stackTrace,omitempty"`
+	// RequestId uses *string so that an empty string "" is serialized (not omitted),
+	// while nil is omitted — init errors always set this field, fault events leave it nil.
+	RequestId  *string  `json:"requestId,omitempty"`
+	StackTrace []string `json:"stackTrace,omitempty"`
 }
