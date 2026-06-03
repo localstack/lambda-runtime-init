@@ -13,6 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// These tests verify the ls-api mock server (cmd/ls-api) — a manual testing tool that
+// emulates the LocalStack endpoint locally. They do NOT test the production RIE code.
+// For regression tests of the actual LS↔RIE API contract, see cmd/localstack/custom_interop_test.go.
+
 const testInvokeID = "test-invoke-id-12345"
 
 // newTestRouter creates a chi router with the same LocalStack API routes as main(),
@@ -139,36 +143,3 @@ func TestStatusErrorReturns202(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 }
 
-// TestInvokeRequestJSONFieldNames verifies that InvokeRequest uses the exact JSON field names
-// that LocalStack sends to the runtime's /invoke endpoint (as defined in custom_interop.go).
-//
-// WARNING: The LocalStack<->RIE API contract is currently unversioned. Any change to these
-// field names is a silent breaking change that requires a coordinated update of both
-// localstack-pro and lambda-runtime-init with no safe rollback path.
-func TestInvokeRequestJSONFieldNames(t *testing.T) {
-	raw := `{
-		"invoke-id":             "abc-123",
-		"invoked-function-arn":  "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
-		"payload":               "{\"key\":\"value\"}",
-		"trace-id":              "Root=1-abc;Parent=def;Sampled=1"
-	}`
-
-	var req InvokeRequest
-	require.NoError(t, json.Unmarshal([]byte(raw), &req))
-
-	assert.Equal(t, "abc-123", req.InvokeId)
-	assert.Equal(t, "arn:aws:lambda:us-east-1:000000000000:function:my-fn", req.InvokedFunctionArn)
-	assert.Equal(t, `{"key":"value"}`, req.Payload)
-	assert.Equal(t, "Root=1-abc;Parent=def;Sampled=1", req.TraceId)
-}
-
-// TestLogResponseJSONFieldName verifies that LogResponse uses the "logs" key
-// expected by LocalStack's executor_endpoint.py invocation_logs handler.
-func TestLogResponseJSONFieldName(t *testing.T) {
-	raw := `{"logs":"START RequestId: abc\nEND RequestId: abc\n"}`
-
-	var lr LogResponse
-	require.NoError(t, json.Unmarshal([]byte(raw), &lr))
-
-	assert.Equal(t, "START RequestId: abc\nEND RequestId: abc\n", lr.Logs)
-}
