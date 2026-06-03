@@ -18,7 +18,10 @@ CID_FILE=$(mktemp -t rie-smoke.XXXXXX)
 cleanup() {
     local cid
     cid=$(cat "$CID_FILE" 2>/dev/null || true)
-    [ -n "$cid" ] && docker stop "$cid" 2>/dev/null || true
+    if [ -n "$cid" ]; then
+        docker stop "$cid" 2>/dev/null || true
+        docker rm -f "$cid" 2>/dev/null || true
+    fi
     [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
     rm -f "$LOG_FILE" "$CID_FILE"
 }
@@ -55,7 +58,8 @@ for i in $(seq 1 10); do nc -z localhost $MOCK_PORT 2>/dev/null && break || slee
 echo ">>> Starting RIE in Docker"
 
 docker_opts=(
-    --rm --detach
+    --detach
+    --platform linux/amd64
     --add-host=host.docker.internal:host-gateway
     -p "$INTEROP_PORT:$INTEROP_PORT"
     -v "$RIE_BINARY:/var/rapid/init:ro"
