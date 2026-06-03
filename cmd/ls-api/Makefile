@@ -24,6 +24,7 @@ start-rie: build-rie  ## Build and run the RIE inside a Docker Python Lambda con
 		-e AWS_LAMBDA_FUNCTION_TIMEOUT=30 \
 		-e AWS_LAMBDA_FUNCTION_VERSION='$$LATEST' \
 		-e AWS_LAMBDA_FUNCTION_MEMORY_SIZE=128 \
+		-e AWS_REGION=us-east-1 \
 		-e _HANDLER=handler.handler \
 		--entrypoint /var/rapid/init \
 		public.ecr.aws/lambda/python:3.12
