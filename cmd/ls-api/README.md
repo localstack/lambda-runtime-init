@@ -46,8 +46,8 @@ Two helper endpoints let you fire additional invocations manually after startup:
 | `GET /fail` | `{"counter": 0, "fail": "yes"}` — expects an error response |
 
 ```bash
-curl http://localhost:48490/test
-curl http://localhost:48490/fail
+make test
+make fail
 ```
 
 All RIE callbacks (`/invocations/*/response`, `/invocations/*/error`, `/invocations/*/logs`, `/status/*/*`) are logged to stdout and return `202 Accepted`.

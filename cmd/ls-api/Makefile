@@ -6,7 +6,7 @@ MOCK_PORT    := 48490
 INTEROP_PORT := 9563
 RIE_BINARY   := $(REPO_ROOT)/bin/aws-lambda-rie-$(ARCH)
 
-.PHONY: build-rie start-mock start-rie
+.PHONY: build-rie start-mock start-rie test fail
 
 build-rie:  ## Build the RIE Linux binary via Go cross-compilation (works on macOS)
 	$(MAKE) -C $(REPO_ROOT) ARCH=$(ARCH) compile-lambda-linux
@@ -28,3 +28,9 @@ start-rie: build-rie  ## Build and run the RIE inside a Docker Python Lambda con
 		-e _HANDLER=handler.handler \
 		--entrypoint /var/rapid/init \
 		public.ecr.aws/lambda/python:3.12
+
+test:  ## Trigger a successful invocation via the mock's /test endpoint
+	curl -sf http://localhost:$(MOCK_PORT)/test
+
+fail:  ## Trigger an error invocation via the mock's /fail endpoint
+	curl -sf http://localhost:$(MOCK_PORT)/fail
