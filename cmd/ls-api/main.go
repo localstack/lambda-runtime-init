@@ -29,7 +29,7 @@ func main() {
 	router.Post("/invocations/{invoke_id}/logs", invokeLogsHandler)
 	router.Post("/status/{runtime_id}/{status}", statusHandler)
 
-	router.Get("/test", func(w http.ResponseWriter, r *http.Request) {
+	router.Get("/success", func(w http.ResponseWriter, r *http.Request) {
 		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
@@ -107,22 +107,20 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
 func invokeResponseHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
-	log.Println(invokeId)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Error(err)
 	}
-	log.Println("result: " + string(bodyBytes))
+	log.WithFields(log.Fields{"invoke_id": invokeId, "body": string(bodyBytes)}).Info("invokeResponseHandler: received response")
 	w.WriteHeader(http.StatusAccepted)
 }
 
 func invokeErrorHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
-	log.Println(invokeId)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Error(err)
 	}
-	log.Println("error result: " + string(bodyBytes))
+	log.WithFields(log.Fields{"invoke_id": invokeId, "body": string(bodyBytes)}).Info("invokeErrorHandler: received error")
 	w.WriteHeader(http.StatusAccepted)
 }

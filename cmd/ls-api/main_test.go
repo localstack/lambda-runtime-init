@@ -20,7 +20,7 @@ import (
 const testInvokeID = "test-invoke-id-12345"
 
 // newTestRouter creates a chi router with the same LocalStack API routes as main(),
-// without the debug /test and /fail endpoints.
+// without the debug /success and /fail endpoints.
 func newTestRouter() *chi.Mux {
 	r := chi.NewRouter()
 	r.Post("/invocations/{invoke_id}/response", invokeResponseHandler)

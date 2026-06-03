@@ -5,11 +5,15 @@ ARCH         ?= x86_64
 MOCK_PORT    := 48490
 INTEROP_PORT := 9563
 RIE_BINARY   := $(REPO_ROOT)/bin/aws-lambda-rie-$(ARCH)
+LS_API_BIN   := $(REPO_ROOT)/bin/ls-api
 
-.PHONY: build-rie start-mock start-rie test fail
+.PHONY: build-rie build-ls-api start-mock start-rie success fail smoke-test
 
 build-rie:  ## Build the RIE Linux binary via Go cross-compilation (works on macOS)
 	$(MAKE) -C $(REPO_ROOT) ARCH=$(ARCH) compile-lambda-linux
+
+build-ls-api:  ## Build the ls-api mock binary
+	go build -o $(LS_API_BIN) $(THIS_MAKEFILE_DIR)
 
 start-mock:  ## Run the ls-api LocalStack endpoint mock natively (no Docker needed)
 	go run $(THIS_MAKEFILE_DIR)
@@ -29,8 +33,11 @@ start-rie: build-rie  ## Build and run the RIE inside a Docker Python Lambda con
 		--entrypoint /var/rapid/init \
 		public.ecr.aws/lambda/python:3.12
 
-test:  ## Trigger a successful invocation via the mock's /test endpoint
-	curl -sf http://localhost:$(MOCK_PORT)/test
+success:  ## Trigger a successful invocation via the mock's /success endpoint
+	curl -sf http://localhost:$(MOCK_PORT)/success
 
 fail:  ## Trigger an error invocation via the mock's /fail endpoint
 	curl -sf http://localhost:$(MOCK_PORT)/fail
+
+smoke-test: build-rie build-ls-api  ## Full e2e smoke test: start mock + RIE, verify success + error invocations, cleanup
+	$(THIS_MAKEFILE_DIR)/smoke-test.sh

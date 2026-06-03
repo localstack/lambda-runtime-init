@@ -1,0 +1,26 @@
+name: LocalStack Smoke Tests
+
+on:
+  push:
+    branches: [localstack]
+  pull_request:
+    branches: [localstack]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-ls-api:
+    name: RIE ↔ LocalStack API Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run smoke test
+        run: make -C cmd/ls-api smoke-test

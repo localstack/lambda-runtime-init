@@ -42,12 +42,22 @@ Two helper endpoints let you fire additional invocations manually after startup:
 
 | Endpoint | Payload |
 |----------|---------|
-| `GET /test` | `{"counter": 0}` — expects a successful response |
+| `GET /success` | `{"counter": 0}` — expects a successful response |
 | `GET /fail` | `{"counter": 0, "fail": "yes"}` — expects an error response |
 
 ```bash
-make test
+make success
 make fail
 ```
 
 All RIE callbacks (`/invocations/*/response`, `/invocations/*/error`, `/invocations/*/logs`, `/status/*/*`) are logged to stdout and return `202 Accepted`.
+
+## Automated smoke test
+
+To run the full e2e smoke test non-interactively (used in CI):
+
+```bash
+make smoke-test
+```
+
+This builds both the RIE binary and the ls-api mock, starts them, verifies a successful and a failing invocation, then cleans up.
