@@ -82,15 +82,12 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return err
 }
 
-func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
+func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
-		delegate:         delegate.(*rapidcore.Server),
-		port:             lsOpts.InteropPort,
-		upstreamEndpoint: lsOpts.RuntimeEndpoint,
-		localStackAdapter: &LocalStackAdapter{
-			UpstreamEndpoint: lsOpts.RuntimeEndpoint,
-			RuntimeId:        lsOpts.RuntimeId,
-		},
+		delegate:          delegate.(*rapidcore.Server),
+		port:              lsOpts.InteropPort,
+		upstreamEndpoint:  lsOpts.RuntimeEndpoint,
+		localStackAdapter: adapter,
 	}
 
 	// TODO: extract this
@@ -204,12 +201,44 @@ func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.E
 	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
-// SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
+// SendInitErrorResponse forwards the init error to LocalStack and then propagates it to the delegate.
 func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendInitErrorResponse called")
-	if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
-		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
+
+	// Deserialize the raw payload so we can include the requestId and structured fields.
+	var parsed struct {
+		ErrorMessage string   `json:"errorMessage"`
+		ErrorType    string   `json:"errorType"`
+		StackTrace   []string `json:"stackTrace,omitempty"`
 	}
+	if err := json.Unmarshal(resp.Payload, &parsed); err != nil {
+		log.WithError(err).Warn("Failed to parse init error payload; forwarding raw payload")
+		if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
+			log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
+				Error("Failed to send init error to LocalStack")
+		}
+		return c.delegate.SendInitErrorResponse(resp)
+	}
+
+	adaptedResp := lsapi.ErrorResponse{
+		ErrorMessage: parsed.ErrorMessage,
+		ErrorType:    parsed.ErrorType,
+		RequestId:    c.delegate.GetCurrentInvokeID(),
+		StackTrace:   parsed.StackTrace,
+	}
+	body, err := json.Marshal(adaptedResp)
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal adapted init error response")
+		body = resp.Payload
+	}
+
+	go func() {
+		if err := c.localStackAdapter.SendStatus(Error, body); err != nil {
+			log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
+				Error("Failed to send init error to LocalStack")
+		}
+	}()
+
 	return c.delegate.SendInitErrorResponse(resp)
 }
 

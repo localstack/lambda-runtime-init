@@ -179,6 +179,20 @@ func main() {
 	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
 	tracer := NewLocalStackTracer()
 
+	// Create LocalStack adapter upfront so it can be shared with the events API and interop server
+	lsAdapter := &LocalStackAdapter{
+		UpstreamEndpoint: lsOpts.RuntimeEndpoint,
+		RuntimeId:        lsOpts.RuntimeId,
+	}
+
+	// Events API forwards runtime fault events (unexpected exits) to LocalStack as error callbacks
+	lsEventsAPI := NewLocalStackEventsAPI(lsAdapter)
+
+	// Supervisor intercepts runtime process terminations and emits fault events via the events API
+	supervisorCtx, cancelSupervisor := context.WithCancel(context.Background())
+
+	localStackSupv := NewLocalStackSupervisor(supervisorCtx, lsEventsAPI)
+
 	// build sandbox
 	sandbox := rapidcore.
 		NewSandboxBuilder().
@@ -186,11 +200,15 @@ func main() {
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
+			log.Debugln("Stopping supervisor")
+			cancelSupervisor()
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer)
+		SetTracer(tracer).
+		SetEventsAPI(lsEventsAPI).
+		SetSupervisor(localStackSupv)
 
 	// Corresponds to the 'AWS_LAMBDA_RUNTIME_API' environment variable.
 	// We need to ensure the runtime server is up before the INIT phase,
@@ -211,7 +229,7 @@ func main() {
 	runDaemon(d) // async
 
 	defaultInterop := sandbox.DefaultInteropServer()
-	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector)
+	interopServer := NewCustomInteropServer(lsOpts, lsAdapter, defaultInterop, logCollector)
 	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
