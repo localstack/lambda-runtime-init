@@ -54,20 +54,13 @@ for i in $(seq 1 10); do nc -z localhost $MOCK_PORT 2>/dev/null && break || slee
 # ---- start RIE ----
 echo ">>> Starting RIE in Docker"
 
-# Docker Desktop on macOS resolves host.docker.internal natively.
-# On Linux use the Docker bridge gateway IP directly.
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    MOCK_ENDPOINT="http://host.docker.internal:$MOCK_PORT"
-else
-    MOCK_ENDPOINT="http://172.17.0.1:$MOCK_PORT"
-fi
-
 docker_opts=(
     --rm --detach
+    --add-host=host.docker.internal:host-gateway
     -p "$INTEROP_PORT:$INTEROP_PORT"
     -v "$RIE_BINARY:/var/rapid/init:ro"
     -v "$SCRIPT_DIR/handler.py:/var/task/handler.py:ro"
-    -e "LOCALSTACK_RUNTIME_ENDPOINT=$MOCK_ENDPOINT"
+    -e "LOCALSTACK_RUNTIME_ENDPOINT=http://host.docker.internal:$MOCK_PORT"
     -e "LOCALSTACK_RUNTIME_ID=smoke-test-runtime"
     -e "AWS_LAMBDA_FUNCTION_TIMEOUT=30"
     -e "AWS_LAMBDA_FUNCTION_MEMORY_SIZE=128"
@@ -78,7 +71,7 @@ docker_opts=(
 
 CID=$(docker run "${docker_opts[@]}" public.ecr.aws/lambda/python:3.12)
 echo "$CID" > "$CID_FILE"
-echo ">>> RIE container: $CID (endpoint: $MOCK_ENDPOINT)"
+echo ">>> RIE container: $CID"
 
 # ---- verify success invocation ----
 # The mock auto-fires one invocation as soon as it receives POST /status/{id}/ready from the RIE.
