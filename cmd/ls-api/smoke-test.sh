@@ -8,8 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 MOCK_PORT=48490
-INTEROP_PORT=9563
-RIE_BINARY="$REPO_ROOT/bin/aws-lambda-rie-x86_64"
 LS_API_BIN="$REPO_ROOT/bin/ls-api"
 
 LOG_FILE=$(mktemp -t ls-api-smoke.XXXXXX)
@@ -55,25 +53,9 @@ MOCK_PID=$!
 for i in $(seq 1 10); do nc -z localhost $MOCK_PORT 2>/dev/null && break || sleep 1; done
 
 # ---- start RIE ----
+# Docker flags are defined once in the Makefile (RIE_DOCKER_OPTS) and shared with start-rie.
 echo ">>> Starting RIE in Docker"
-
-docker_opts=(
-    --detach
-    --platform linux/amd64
-    --add-host=host.docker.internal:host-gateway
-    -p "$INTEROP_PORT:$INTEROP_PORT"
-    -v "$RIE_BINARY:/var/rapid/init:ro"
-    -v "$SCRIPT_DIR/handler.py:/var/task/handler.py:ro"
-    -e "LOCALSTACK_RUNTIME_ENDPOINT=http://host.docker.internal:$MOCK_PORT"
-    -e "LOCALSTACK_RUNTIME_ID=smoke-test-runtime"
-    -e "AWS_LAMBDA_FUNCTION_TIMEOUT=30"
-    -e "AWS_LAMBDA_FUNCTION_MEMORY_SIZE=128"
-    -e "AWS_REGION=us-east-1"
-    -e "_HANDLER=handler.handler"
-    --entrypoint /var/rapid/init
-)
-
-CID=$(docker run "${docker_opts[@]}" public.ecr.aws/lambda/python:3.12)
+CID=$(make -s --no-print-directory -C "$SCRIPT_DIR" start-rie-detached)
 echo "$CID" > "$CID_FILE"
 echo ">>> RIE container: $CID"
 
