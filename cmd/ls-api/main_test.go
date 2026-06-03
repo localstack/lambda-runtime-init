@@ -142,4 +142,3 @@ func TestStatusErrorReturns202(t *testing.T) {
 
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 }
-
