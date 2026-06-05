@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone/telemetry"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
+	"github.com/google/uuid"
 )
 
 // LocalStackEventsAPI intercepts fault events and forwards them to LocalStack as error status callbacks.
@@ -29,10 +30,16 @@ func (ev *LocalStackEventsAPI) SendFault(data interop.FaultData) error {
 	_ = ev.StandaloneEventsAPI.SendFault(data)
 
 	requestID := string(data.RequestID)
-	if data.RequestID == "" {
+	if requestID == "" {
 		ev.mu.RLock()
 		requestID = ev.requestID
 		ev.mu.RUnlock()
+	}
+	if requestID == "" {
+		// No invocation is active during the init phase (LocalStack only dispatches an invoke
+		// after the runtime reports ready), so synthesize an ID to preserve AWS's
+		// "RequestId: <uuid> Error: ..." message format.
+		requestID = uuid.NewString()
 	}
 
 	resp := lsapi.ErrorResponse{

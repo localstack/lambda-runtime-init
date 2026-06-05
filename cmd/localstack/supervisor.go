@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/supervisor"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/supervisor/model"
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -77,8 +76,10 @@ func (ls *LocalStackSupervisor) loop(ctx context.Context) {
 				log.Debugf("Runtime process signalled: %d", *termination.Signo)
 			}
 
+			// RequestID is left empty so the events API can resolve it: it uses the current
+			// invoke ID for a mid-invocation crash and synthesizes a placeholder for init-phase
+			// faults, where no invocation has been dispatched yet.
 			faultData := interop.FaultData{
-				RequestID:    interop.RequestID(uuid.NewString()),
 				ErrorMessage: errors.New("Runtime exited without providing a reason"),
 				ErrorType:    fatalerror.RuntimeExit,
 			}
