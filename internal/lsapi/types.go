@@ -6,6 +6,7 @@ type InvokeRequest struct {
 	InvokedFunctionArn string `json:"invoked-function-arn"`
 	Payload            string `json:"payload"`
 	TraceId            string `json:"trace-id"`
+	IsInitRetry        bool   `json:"is-init-retry,omitempty"`
 }
 
 // LogResponse is sent by the runtime to report logs for a completed invocation.

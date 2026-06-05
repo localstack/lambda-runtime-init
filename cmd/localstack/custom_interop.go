@@ -28,6 +28,8 @@ type CustomInteropServer struct {
 	localStackAdapter *LocalStackAdapter
 	port              string
 	upstreamEndpoint  string
+	initStart         time.Time
+	warmStart         bool
 }
 
 type LocalStackAdapter struct {
@@ -111,6 +113,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
+				initDuration := ""
+				if !server.warmStart && !invokeR.IsInitRetry {
+					initTimeMS := float64(time.Since(server.initStart).Nanoseconds()) / float64(time.Millisecond)
+					initDuration = fmt.Sprintf("Init Duration: %.2f ms\t", initTimeMS)
+				}
+				server.warmStart = true
+
 				invokeStart := time.Now()
 				err = server.Invoke(invokeResp, &interop.Invoke{
 					ID:                 invokeR.InvokeId,
@@ -132,15 +141,17 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				})
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
+				status := ""
 				if err != nil {
 					switch {
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
 						isErr = true
+						status = "Status: timeout"
 						errorResponse := lsapi.ErrorResponse{
+							ErrorType: "Sandbox.Timedout",
 							ErrorMessage: fmt.Sprintf(
-								"%s %s Task timed out after %d.00 seconds",
-								time.Now().Format("2006-01-02T15:04:05Z"),
+								"RequestId: %s Error: Task timed out after %d.00 seconds",
 								invokeR.InvokeId,
 								timeout,
 							),
@@ -169,7 +180,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				}
 				timeoutDuration := time.Duration(timeout) * time.Second
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
-				PrintEndReports(invokeR.InvokeId, "", memorySize, invokeStart, timeoutDuration, logCollector)
+				PrintEndReports(invokeR.InvokeId, initDuration, status, memorySize, invokeStart, timeoutDuration, logCollector)
 
 				if err2 := server.localStackAdapter.SendLogs(invokeR.InvokeId, logCollector.getLogs()); err2 != nil {
 					log.Error("failed to send logs to LocalStack: ", err2)
@@ -256,6 +267,7 @@ func (c *CustomInteropServer) SendRuntimeReady() error {
 
 func (c *CustomInteropServer) Init(i *interop.Init, invokeTimeoutMs int64) error {
 	log.Traceln("Init called")
+	c.initStart = time.Now()
 	return c.delegate.Init(i, invokeTimeoutMs)
 }
 

@@ -92,7 +92,7 @@ func getBootstrap(args []string) (interop.Bootstrap, string) {
 	return NewSimpleBootstrap(bootstrapLookupCmd, currentWorkingDir), handler
 }
 
-func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
+func PrintEndReports(invokeId string, initDuration string, status string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
 	// Calculate invoke duration
 	invokeDuration := math.Min(float64(time.Now().Sub(invokeStart).Nanoseconds()),
 		float64(timeoutDuration.Nanoseconds())) / float64(time.Millisecond)
@@ -102,11 +102,12 @@ func PrintEndReports(invokeId string, initDuration string, memorySize string, in
 	// not a clean way to get this information from rapidcore
 	_, _ = fmt.Fprintf(w,
 		"REPORT RequestId: %s\t"+
-			initDuration+
 			"Duration: %.2f ms\t"+
 			"Billed Duration: %.f ms\t"+
 			"Memory Size: %s MB\t"+
-			"Max Memory Used: %s MB\t\n",
+			"Max Memory Used: %s MB\t"+
+			initDuration+
+			status+"\n",
 		invokeId, invokeDuration, math.Ceil(invokeDuration), memorySize, memorySize)
 }
 
