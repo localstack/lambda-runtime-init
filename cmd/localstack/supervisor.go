@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -78,7 +79,7 @@ func (ls *LocalStackSupervisor) loop(ctx context.Context) {
 
 			faultData := interop.FaultData{
 				RequestID:    interop.RequestID(uuid.NewString()),
-				ErrorMessage: fmt.Errorf("Runtime exited without providing a reason"),
+				ErrorMessage: errors.New("Runtime exited without providing a reason"),
 				ErrorType:    fatalerror.RuntimeExit,
 			}
 			if !termination.Success() {

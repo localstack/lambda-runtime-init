@@ -28,8 +28,11 @@ type CustomInteropServer struct {
 	localStackAdapter *LocalStackAdapter
 	port              string
 	upstreamEndpoint  string
-	initStart         time.Time
-	warmStart         bool
+	// initStart is set once in Init() and warmStart is flipped on the first invoke.
+	// Both are accessed only from the single sequential init -> invoke flow (the RIE
+	// processes one invocation at a time), so they need no additional synchronization.
+	initStart time.Time
+	warmStart bool
 }
 
 type LocalStackAdapter struct {
@@ -46,10 +49,11 @@ const (
 
 func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
 	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
+	resp, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	return nil
 }
 
@@ -59,8 +63,12 @@ func (l *LocalStackAdapter) SendLogs(invokeId string, logs lsapi.LogResponse) er
 	if err != nil {
 		return err
 	}
-	_, err = http.Post(l.UpstreamEndpoint+"/invocations/"+invokeId+"/logs", "application/json", bytes.NewReader(serialized))
-	return err
+	resp, err := http.Post(l.UpstreamEndpoint+"/invocations/"+invokeId+"/logs", "application/json", bytes.NewReader(serialized))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 // SendResult posts the invocation result body to LocalStack.
@@ -80,8 +88,12 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	} else {
 		log.Infoln("Sending to /response")
 	}
-	_, err := http.Post(l.UpstreamEndpoint+endpoint, "application/json", bytes.NewReader(body))
-	return err
+	resp, err := http.Post(l.UpstreamEndpoint+endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 
