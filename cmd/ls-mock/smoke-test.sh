@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e smoke test: starts the ls-api mock and the RIE in Docker, then verifies that
+# e2e smoke test: starts the ls-mock mock and the RIE in Docker, then verifies that
 # both a successful and a failing Lambda invocation complete correctly.
 # Exits 0 on success, non-zero on failure. Cleans up on exit.
 set -euo pipefail
@@ -8,9 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 MOCK_PORT=48490
-LS_API_BIN="$REPO_ROOT/bin/ls-api"
+LS_API_BIN="$REPO_ROOT/bin/ls-mock"
 
-LOG_FILE=$(mktemp -t ls-api-smoke.XXXXXX)
+LOG_FILE=$(mktemp -t ls-mock-smoke.XXXXXX)
 CID_FILE=$(mktemp -t rie-smoke.XXXXXX)
 
 cleanup() {
@@ -41,13 +41,13 @@ wait_for_log() {
         echo "--- RIE container logs ---" >&2
         docker logs "$cid" 2>&1 >&2 || true
     fi
-    echo "--- ls-api log ---" >&2
+    echo "--- ls-mock log ---" >&2
     cat "$LOG_FILE" >&2
     return 1
 }
 
 # ---- start mock ----
-echo ">>> Starting ls-api mock (port $MOCK_PORT)"
+echo ">>> Starting ls-mock mock (port $MOCK_PORT)"
 "$LS_API_BIN" > "$LOG_FILE" 2>&1 &
 MOCK_PID=$!
 for i in $(seq 1 10); do nc -z localhost $MOCK_PORT 2>/dev/null && break || sleep 1; done
@@ -74,5 +74,5 @@ echo ">>> Error invocation received"
 echo ""
 echo "=== Smoke test passed: success + error invocations verified ==="
 echo ""
-echo "--- ls-api log ---"
+echo "--- ls-mock log ---"
 cat "$LOG_FILE"

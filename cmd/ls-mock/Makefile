@@ -5,7 +5,7 @@ ARCH         ?= x86_64
 MOCK_PORT    := 48490
 INTEROP_PORT := 9563
 RIE_BINARY   := $(REPO_ROOT)/bin/aws-lambda-rie-$(ARCH)
-LS_API_BIN   := $(REPO_ROOT)/bin/ls-api
+LS_MOCK_BIN  := $(REPO_ROOT)/bin/ls-mock
 
 # Common docker flags for start-rie and start-rie-detached.
 # Uses deferred assignment (=) so $$LATEST is not expanded until recipe time,
@@ -25,15 +25,15 @@ RIE_DOCKER_OPTS = \
 	-e _HANDLER=handler.handler \
 	--entrypoint /var/rapid/init
 
-.PHONY: build-rie build-ls-api start-mock start-rie start-rie-detached success fail smoke-test
+.PHONY: build-rie build-ls-mock start-mock start-rie start-rie-detached success fail smoke-test
 
 build-rie:  ## Build the RIE Linux binary via Go cross-compilation (works on macOS)
 	$(MAKE) -C $(REPO_ROOT) ARCH=$(ARCH) compile-lambda-linux
 
-build-ls-api:  ## Build the ls-api mock binary
-	go build -o $(LS_API_BIN) $(THIS_MAKEFILE_DIR)
+build-ls-mock:  ## Build the ls-mock binary
+	go build -o $(LS_MOCK_BIN) $(THIS_MAKEFILE_DIR)
 
-start-mock:  ## Run the ls-api LocalStack endpoint mock natively (no Docker needed)
+start-mock:  ## Run the ls-mock LocalStack endpoint mock natively (no Docker needed)
 	go run $(THIS_MAKEFILE_DIR)
 
 start-rie: build-rie  ## Build and run the RIE inside a Docker Python Lambda container
@@ -48,5 +48,5 @@ success:  ## Trigger a successful invocation via the mock's /success endpoint
 fail:  ## Trigger an error invocation via the mock's /fail endpoint
 	curl -sf http://localhost:$(MOCK_PORT)/fail
 
-smoke-test: build-rie build-ls-api  ## Full e2e smoke test: start mock + RIE, verify success + error invocations, cleanup
+smoke-test: build-rie build-ls-mock  ## Full e2e smoke test: start mock + RIE, verify success + error invocations, cleanup
 	$(THIS_MAKEFILE_DIR)/smoke-test.sh

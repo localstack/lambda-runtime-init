@@ -1,4 +1,4 @@
-# ls-api — LocalStack endpoint mock
+# ls-mock — LocalStack endpoint mock
 
 A lightweight HTTP server that stands in for the LocalStack endpoint when testing the RIE in isolation, without a running LocalStack instance.
 
@@ -60,4 +60,4 @@ To run the full e2e smoke test non-interactively (used in CI):
 make smoke-test
 ```
 
-This builds both the RIE binary and the ls-api mock, starts them, verifies a successful and a failing invocation, then cleans up.
+This builds both the RIE binary and the ls-mock mock, starts them, verifies a successful and a failing invocation, then cleans up.

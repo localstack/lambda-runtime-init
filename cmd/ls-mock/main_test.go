@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests verify the ls-api mock server (cmd/ls-api) — a manual testing tool that
+// These tests verify the ls-mock mock server (cmd/ls-mock) — a manual testing tool that
 // emulates the LocalStack endpoint locally. They do NOT test the production RIE code.
 // For regression tests of the actual LS↔RIE API contract, see cmd/localstack/custom_interop_test.go.
 

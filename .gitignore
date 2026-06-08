@@ -2,7 +2,7 @@
 /build
 /bin
 aws-lambda-rie
-ls-api
+ls-mock
 *.swp
 *.iml
 tags

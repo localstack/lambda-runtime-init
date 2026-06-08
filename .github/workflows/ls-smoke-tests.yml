@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke-ls-api:
+  smoke-ls-mock:
     name: RIE ↔ LocalStack API Smoke Test
     runs-on: ubuntu-latest
     steps:
@@ -23,4 +23,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Run smoke test
-        run: make -C cmd/ls-api smoke-test
+        run: make -C cmd/ls-mock smoke-test

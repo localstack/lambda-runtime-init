@@ -18,8 +18,8 @@ Refer to [debugging/README.md](./debugging/README.md) for instructions on how to
 | `cmd/localstack`                         | LocalStack customizations                                                                                                                                                                                                                                        |
 | ├── `main.go`                            | Main entrypoint                                                                                                                                                                                                                                                  |
 | ├── `custom_interop.go`                  | Custom server interface between the Lambda runtime API and this Go init. Implements the `Server` interface from `lambda/interop/model.go:Server` but forwards most calls to the original implementation in `lambda/rapidcore/server.go` available as `delegate`. |
-| `cmd/ls-api`                             | Mock LocalStack component for smoke testing                                                                                                                                                                                                                      |
-| ├── [`README.md`](./cmd/ls-api/README.md) | Instructions for LS API<->RIE smoke testing                                                                                                                                                                                                                     |
+| `cmd/ls-mock`                             | Mock LocalStack component for smoke testing                                                                                                                                                                                                                      |
+| ├── [`README.md`](./cmd/ls-mock/README.md) | Instructions for LS API<->RIE smoke testing                                                                                                                                                                                                                     |
 | `debugging/`                             | Debug and test this Go init with LocalStack                                                                                                                                                                                                                      |
 | ├── [`README.md`](./debugging/README.md) | Instructions for building and debugging with LocalStack                                                                                                                                                                                                          |
 | `lambda`                                 | Original AWS implementation of the runtime emulator ideally kept untouched                                                                                                                                                                                       |
@@ -43,6 +43,6 @@ Example PR that integrates upstream changes: https://github.com/localstack/lambd
 
 Document all custom changes with the following comment prefix `# LOCALSTACK CHANGES yyyy-mm-dd:`
 
-* Everything in `cmd/localstack`, `cmd/ls-api`, and `.github`
+* Everything in `cmd/localstack`, `cmd/ls-mock`, and `.github`
 * `Makefile` for debugging and building with Docker
 * 2023-10-17: `lambda/rapidcore/server.go` pass request metadata into .Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
