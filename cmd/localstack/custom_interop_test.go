@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestInvokeRequestContract(t *testing.T) {
 		"trace-id":             "Root=1-abc;Parent=def;Sampled=1"
 	}`
 
-	var req InvokeRequest
+	var req lsapi.InvokeRequest
 	require.NoError(t, json.Unmarshal([]byte(raw), &req))
 
 	assert.Equal(t, "abc-123", req.InvokeId)
@@ -42,7 +43,7 @@ func TestInvokeRequestContract(t *testing.T) {
 func TestLogResponseContract(t *testing.T) {
 	raw := `{"logs":"START RequestId: abc\nEND RequestId: abc\n"}`
 
-	var lr LogResponse
+	var lr lsapi.LogResponse
 	require.NoError(t, json.Unmarshal([]byte(raw), &lr))
 
 	assert.Equal(t, "START RequestId: abc\nEND RequestId: abc\n", lr.Logs)
@@ -84,7 +85,7 @@ func TestSendStatus_ErrorSendsToCorrectPath(t *testing.T) {
 
 func TestSendLogs_SendsJSONWithLogsKey(t *testing.T) {
 	var capturedPath string
-	var capturedBody LogResponse
+	var capturedBody lsapi.LogResponse
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
 		body, _ := io.ReadAll(r.Body)
@@ -94,7 +95,7 @@ func TestSendLogs_SendsJSONWithLogsKey(t *testing.T) {
 	defer srv.Close()
 
 	adapter := &LocalStackAdapter{UpstreamEndpoint: srv.URL}
-	logs := LogResponse{Logs: "START RequestId: invoke-1\nEND RequestId: invoke-1\n"}
+	logs := lsapi.LogResponse{Logs: "START RequestId: invoke-1\nEND RequestId: invoke-1\n"}
 	require.NoError(t, adapter.SendLogs("invoke-1", logs))
 
 	assert.Equal(t, "/invocations/invoke-1/logs", capturedPath)

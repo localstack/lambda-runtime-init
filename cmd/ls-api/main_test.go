@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,7 +72,7 @@ func TestInvocationLogsReturns202(t *testing.T) {
 	srv := httptest.NewServer(newTestRouter())
 	defer srv.Close()
 
-	logPayload, err := json.Marshal(LogResponse{
+	logPayload, err := json.Marshal(lsapi.LogResponse{
 		Logs: "START RequestId: " + testInvokeID + " Version: $LATEST\nEND RequestId: " + testInvokeID + "\n",
 	})
 	require.NoError(t, err)
@@ -91,9 +92,9 @@ func TestInvocationLogsReturns202(t *testing.T) {
 //   - returns 202 Accepted (matching LocalStack executor_endpoint.py status_ready)
 //   - asynchronously sends a POST to the invoke endpoint with a valid InvokeRequest body
 func TestStatusReadyReturns202AndTriggersInvoke(t *testing.T) {
-	invokeCh := make(chan InvokeRequest, 1)
+	invokeCh := make(chan lsapi.InvokeRequest, 1)
 	captureServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req InvokeRequest
+		var req lsapi.InvokeRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		invokeCh <- req
 		w.WriteHeader(http.StatusOK)

@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"net/http"
 )
 
 const apiPort = 9563
@@ -30,7 +32,7 @@ func main() {
 	router.Post("/status/{runtime_id}/{status}", statusHandler)
 
 	router.Get("/success", func(w http.ResponseWriter, r *http.Request) {
-		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
+		invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
 			log.Error(err)
@@ -44,7 +46,7 @@ func main() {
 	})
 
 	router.Get("/fail", func(w http.ResponseWriter, r *http.Request) {
-		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0, \"fail\": \"yes\"}"})
+		invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0, \"fail\": \"yes\"}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
 			log.Error(err)
@@ -67,7 +69,7 @@ func main() {
 func invokeLogsHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
 	log.Println(invokeId)
-	var logResponse LogResponse
+	var logResponse lsapi.LogResponse
 	if err := json.NewDecoder(r.Body).Decode(&logResponse); err != nil {
 		log.Error("invalid logs payload: ", err)
 	} else {
@@ -76,26 +78,13 @@ func invokeLogsHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// InvokeRequest is sent by LocalStack to trigger an invocation.
-type InvokeRequest struct {
-	InvokeId           string `json:"invoke-id"`
-	InvokedFunctionArn string `json:"invoked-function-arn"`
-	Payload            string `json:"payload"`
-	TraceId            string `json:"trace-id"`
-}
-
-// LogResponse is sent by the runtime to report logs for a completed invocation.
-type LogResponse struct {
-	Logs string `json:"logs"`
-}
-
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	runtime_id := chi.URLParam(r, "runtime_id")
 	status := chi.URLParam(r, "status")
 	log.Println(runtime_id + " + " + status)
 	if status == "ready" {
 		go func() {
-			invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: "12345", Payload: "{\"counter\":0}"})
+			invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: "12345", Payload: "{\"counter\":0}"})
 			_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 			if err != nil {
 				log.Error(err)

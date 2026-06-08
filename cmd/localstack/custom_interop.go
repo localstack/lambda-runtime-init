@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi/v5"
 	log "github.com/sirupsen/logrus"
 )
@@ -51,7 +52,7 @@ func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) 
 }
 
 // SendLogs posts the captured invocation logs to LocalStack.
-func (l *LocalStackAdapter) SendLogs(invokeId string, logs LogResponse) error {
+func (l *LocalStackAdapter) SendLogs(invokeId string, logs lsapi.LogResponse) error {
 	serialized, err := json.Marshal(logs)
 	if err != nil {
 		return err
@@ -81,22 +82,6 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return err
 }
 
-// The InvokeRequest is sent by LocalStack to trigger an invocation
-type InvokeRequest struct {
-	InvokeId           string `json:"invoke-id"`
-	InvokedFunctionArn string `json:"invoked-function-arn"`
-	Payload            string `json:"payload"`
-	TraceId            string `json:"trace-id"`
-}
-
-// The ErrorResponse is sent TO LocalStack when encountering an error
-type ErrorResponse struct {
-	ErrorMessage string   `json:"errorMessage"`
-	ErrorType    string   `json:"errorType,omitempty"`
-	RequestId    string   `json:"requestId,omitempty"`
-	StackTrace   []string `json:"stackTrace,omitempty"`
-}
-
 func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
 		delegate:         delegate.(*rapidcore.Server),
@@ -112,7 +97,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 	go func() {
 		r := chi.NewRouter()
 		r.Post("/invoke", func(w http.ResponseWriter, r *http.Request) {
-			invokeR := InvokeRequest{}
+			invokeR := lsapi.InvokeRequest{}
 			bytess, err := io.ReadAll(r.Body)
 			if err != nil {
 				log.Error(err)
@@ -154,7 +139,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
 						isErr = true
-						errorResponse := ErrorResponse{
+						errorResponse := lsapi.ErrorResponse{
 							ErrorMessage: fmt.Sprintf(
 								"%s %s Task timed out after %d.00 seconds",
 								time.Now().Format("2006-01-02T15:04:05Z"),
