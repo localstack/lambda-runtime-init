@@ -734,14 +734,17 @@ func (s *Server) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invo
 	return err
 }
 
-type initCompletionResponse struct {
+// InitCompletionResponse carries the structured init failure cause (error type and
+// message) extracted from the InitFailure. It is exposed via AwaitInitializedWithDetails
+// so standalone callers can report the failure instead of only seeing the sentinel error.
+type InitCompletionResponse struct {
 	InitErrorType    fatalerror.ErrorType
 	InitErrorMessage error
 }
 
-func (s *Server) awaitInitialized() (initCompletionResponse, error) {
+func (s *Server) awaitInitialized() (InitCompletionResponse, error) {
 	initFailure, awaitingInitStatus := <-s.getInitFailuresChan()
-	resp := initCompletionResponse{}
+	resp := InitCompletionResponse{}
 
 	if initFailure.ResetReceived {
 		// Resets during Init are only received in standalone
@@ -768,15 +771,25 @@ func (s *Server) awaitInitialized() (initCompletionResponse, error) {
 // AwaitInitialized waits until init is complete. It must be idempotent,
 // since it can be called twice when a caller wants to wait until init is complete
 func (s *Server) AwaitInitialized() error {
-	if _, err := s.awaitInitialized(); err != nil {
-		if releaseErr := s.Release(); err != nil {
+	_, err := s.AwaitInitializedWithDetails()
+	return err
+}
+
+// AwaitInitializedWithDetails behaves like AwaitInitialized but, on failure, also returns
+// the structured init error (type and message) carried by the InitFailure. This lets
+// standalone callers report the failure to their control plane instead of only observing
+// the sentinel error (ErrInitDoneFailed / ErrInitResetReceived).
+func (s *Server) AwaitInitializedWithDetails() (InitCompletionResponse, error) {
+	resp, err := s.awaitInitialized()
+	if err != nil {
+		if releaseErr := s.Release(); releaseErr != nil {
 			log.Infof("Error releasing after init failure %s: %s", err, releaseErr)
 		}
 		s.setRuntimeState(runtimeInitFailed)
-		return err
+		return resp, err
 	}
 	s.setRuntimeState(runtimeInitComplete)
-	return nil
+	return resp, nil
 }
 
 func (s *Server) AwaitRelease() (*statejson.ReleaseResponse, error) {

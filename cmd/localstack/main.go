@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -249,11 +250,18 @@ func main() {
 	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
 
 	log.Debugln("Awaiting initialization of runtime init.")
-	if err := interopServer.delegate.AwaitInitialized(); err != nil {
+	initResp, err := interopServer.delegate.AwaitInitializedWithDetails()
+	if err != nil {
 		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
-		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
-		// callback SendInitErrorResponse because it contains the correct error response payload.
+		// ErrInitResetReceived is the init-phase timeout/reset path, which is reported
+		// separately; only report genuine init failures here. When the runtime reported its
+		// own error via /init/error, SendInitErrorResponse already forwarded it and
+		// SendInitError is a no-op. When the runtime instead crashed/exited without reporting,
+		// this is the only callback that notifies LocalStack (otherwise it waits until timeout).
+		if !errors.Is(err, rapidcore.ErrInitResetReceived) {
+			interopServer.SendInitError(initResp.InitErrorType, initResp.InitErrorMessage)
+		}
 		return
 	}
 

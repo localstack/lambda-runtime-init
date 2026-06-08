@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core/statejson"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone"
@@ -27,6 +29,10 @@ type CustomInteropServer struct {
 	localStackAdapter *LocalStackAdapter
 	port              string
 	upstreamEndpoint  string
+	// initErrorForwarded is set once the runtime's own /init/error has been forwarded to
+	// LocalStack via SendInitErrorResponse, so the crash-path fallback (SendInitError) does
+	// not send a duplicate error status for the same failed initialization.
+	initErrorForwarded atomic.Bool
 }
 
 type LocalStackAdapter struct {
@@ -43,10 +49,11 @@ const (
 
 func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
 	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	_, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
+	resp, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	return nil
 }
 
@@ -208,13 +215,56 @@ func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.E
 	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
-// SendInitErrorResponse writes error response during init to a shared memory and sends GIRD FAULT.
+// SendInitErrorResponse forwards the init error reported by the runtime (via /init/error)
+// to LocalStack and then propagates it to the delegate. The runtime's payload already
+// contains the structured error (errorMessage, errorType, stackTrace), so it is forwarded
+// as-is. It marks initErrorForwarded so the crash-path fallback in main.go (SendInitError)
+// does not send a duplicate error status.
 func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendInitErrorResponse called")
+	// Mark synchronously, before sending: this runs in the init flow before
+	// AwaitInitializedWithDetails unblocks in main.go, so the fallback observes the flag.
+	c.initErrorForwarded.Store(true)
 	if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
-		log.Fatalln("Failed to send init error to LocalStack " + err.Error() + ". Exiting.")
+		log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
+			Error("Failed to send init error to LocalStack")
 	}
 	return c.delegate.SendInitErrorResponse(resp)
+}
+
+// SendInitError reports a structured init failure to LocalStack when the runtime failed to
+// initialize WITHOUT calling /init/error itself (e.g. it crashed, called sys.exit, or had an
+// invalid entrypoint). The init failure is detected by the existing rapidcore machinery
+// (watchEvents -> InitFailure -> AwaitInitializedWithDetails) and surfaced to main.go.
+// It is a no-op if SendInitErrorResponse already forwarded the runtime's own structured error.
+func (c *CustomInteropServer) SendInitError(errType fatalerror.ErrorType, errMsg error) {
+	if c.initErrorForwarded.Load() {
+		log.Debug("Init error already forwarded to LocalStack; skipping duplicate")
+		return
+	}
+
+	if errType == "" {
+		errType = fatalerror.RuntimeExit
+	}
+
+	message := "Runtime exited during initialization"
+	if errMsg != nil {
+		message = errMsg.Error()
+	}
+
+	payload, err := json.Marshal(ErrorResponse{
+		ErrorType:    string(errType),
+		ErrorMessage: message,
+	})
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal init error response")
+		return
+	}
+
+	if err := c.localStackAdapter.SendStatus(Error, payload); err != nil {
+		log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
+			Error("Failed to send init error to LocalStack")
+	}
 }
 
 func (c *CustomInteropServer) GetCurrentInvokeID() string {
