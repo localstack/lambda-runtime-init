@@ -196,6 +196,10 @@ func main() {
 		RuntimeId:        lsOpts.RuntimeId,
 	}
 
+	// Events API rides rapidcore's invoke lifecycle to emit the synthetic START log line after
+	// any inline (suppressed) init, matching AWS's ordering.
+	lsEventsAPI := NewLocalStackEventsAPI(logCollector)
+
 	// build sandbox
 	sandbox := rapidcore.
 		NewSandboxBuilder().
@@ -207,7 +211,8 @@ func main() {
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer)
+		SetTracer(tracer).
+		SetEventsAPI(lsEventsAPI)
 
 	// Corresponds to the 'AWS_LAMBDA_RUNTIME_API' environment variable.
 	// We need to ensure the runtime server is up before the INIT phase,

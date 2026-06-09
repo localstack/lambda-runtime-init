@@ -137,8 +137,8 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				}
 
 				invokeResp := &standalone.ResponseWriterProxy{}
-				functionVersion := GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION") // default $LATEST
-				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
+				// The synthetic START line is emitted via LocalStackEventsAPI.SendInvokeStart so it
+				// lands after any inline (suppressed) init, matching AWS — see events.go.
 
 				initDuration := ""
 				if !server.warmStart && !server.initTimedOut.Load() {
