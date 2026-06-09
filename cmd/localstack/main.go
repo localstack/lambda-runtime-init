@@ -299,12 +299,18 @@ func main() {
 				log.Debugf("Reset after init timeout returned: %s", resetErr)
 			}
 		}()
+	case interopServer.onDemand && errors.Is(err, rapidcore.ErrInitDoneFailed):
+		// On-demand: AWS folds a failed cold-start init into the first invocation (suppressed
+		// init). Signal ready and keep the process alive so LocalStack dispatches the first
+		// invoke, which surfaces the cached init error (or a runtime-exit error) together with
+		// the full INIT_REPORT/START/END/REPORT log envelope. SendInitErrorResponse has already
+		// cached the structured error (without reporting via /status/error for on-demand).
+		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
 	case err != nil:
-		// Error cases: ErrInitDoneFailed (runtime crashed/exited or called /init/error) or
-		// ErrInitResetReceived (init-phase reset). When the runtime reported its own error via
-		// /init/error, SendInitErrorResponse already forwarded it and SendInitError is a no-op.
-		// When the runtime instead crashed/exited without reporting, this is the only callback
-		// that notifies LocalStack (otherwise it waits until the environment timeout).
+		// PC/SnapStart/MI, or an init-phase reset: report the failure now and exit. When the
+		// runtime reported its own error via /init/error, SendInitErrorResponse already
+		// forwarded it and SendInitError is a no-op. When the runtime crashed/exited without
+		// reporting, this is the only callback that notifies LocalStack.
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
 		if !errors.Is(err, rapidcore.ErrInitResetReceived) {
 			interopServer.SendInitError(initResp.InitErrorType, initResp.InitErrorMessage)
