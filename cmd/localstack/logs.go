@@ -38,8 +38,17 @@ func (lc *LogCollector) reset() {
 func (lc *LogCollector) getLogs() lsapi.LogResponse {
 	lc.mutex.Lock()
 	defer lc.mutex.Unlock()
+	logs := strings.Join(lc.RuntimeLogs, "")
+	// The runtime emits multi-line records (e.g. an unhandled-init traceback) as a single log
+	// frame with internal newlines replaced by bare carriage returns. AWS renders those back as
+	// line feeds, so convert bare CR to LF while preserving genuine CRLF line endings (which AWS
+	// keeps verbatim, e.g. the LAMBDA_WARNING line).
+	const crlfPlaceholder = "\x00"
+	logs = strings.ReplaceAll(logs, "\r\n", crlfPlaceholder)
+	logs = strings.ReplaceAll(logs, "\r", "\n")
+	logs = strings.ReplaceAll(logs, crlfPlaceholder, "\r\n")
 	response := lsapi.LogResponse{
-		Logs: strings.Join(lc.RuntimeLogs, ""),
+		Logs: logs,
 	}
 	lc.RuntimeLogs = []string{}
 	return response
