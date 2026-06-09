@@ -250,13 +250,12 @@ func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeRes
 	// AwaitInitializedWithDetails unblocks in main.go, so the fallback observes the flag.
 	c.initErrorForwarded.Store(true)
 
-	// Deserialize the raw payload so we can include the requestId and structured fields.
-	var parsed struct {
-		ErrorMessage string   `json:"errorMessage"`
-		ErrorType    string   `json:"errorType"`
-		StackTrace   []string `json:"stackTrace,omitempty"`
-	}
-	if err := json.Unmarshal(resp.Payload, &parsed); err != nil {
+	// Forward the runtime's structured payload as-is and only inject the requestId. Decoding
+	// into a map rather than a typed struct preserves fields exactly as the runtime emitted
+	// them — in particular an empty but present "stackTrace": [] (e.g. Runtime.HandlerNotFound),
+	// which a typed struct with omitempty would drop on re-marshal.
+	var payload map[string]any
+	if err := json.Unmarshal(resp.Payload, &payload); err != nil {
 		log.WithError(err).Warn("Failed to parse init error payload; forwarding raw payload")
 		if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
 			log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
@@ -265,14 +264,11 @@ func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeRes
 		return c.delegate.SendInitErrorResponse(resp)
 	}
 
-	requestId := c.delegate.GetCurrentInvokeID()
-	adaptedResp := lsapi.ErrorResponse{
-		ErrorMessage: parsed.ErrorMessage,
-		ErrorType:    parsed.ErrorType,
-		RequestId:    &requestId,
-		StackTrace:   parsed.StackTrace,
-	}
-	body, err := json.Marshal(adaptedResp)
+	// No invocation is active during the init phase, so this is typically blank; AWS still
+	// includes a (blank) requestId in the init error payload.
+	payload["requestId"] = c.delegate.GetCurrentInvokeID()
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		log.WithError(err).Error("Failed to marshal adapted init error response")
 		body = resp.Payload
