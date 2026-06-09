@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	log "github.com/sirupsen/logrus"
-	"io"
-	"net/http"
 )
 
 const apiPort = 9563
@@ -29,11 +31,11 @@ func main() {
 	router.Post("/invocations/{invoke_id}/logs", invokeLogsHandler)
 	router.Post("/status/{runtime_id}/{status}", statusHandler)
 
-	router.Get("/test", func(w http.ResponseWriter, r *http.Request) {
-		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
+	router.Get("/success", func(w http.ResponseWriter, r *http.Request) {
+		invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
 		}
 
 		w.WriteHeader(200)
@@ -44,10 +46,10 @@ func main() {
 	})
 
 	router.Get("/fail", func(w http.ResponseWriter, r *http.Request) {
-		invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0, \"fail\": \"yes\"}"})
+		invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: uid, Payload: "{\"counter\":0, \"fail\": \"yes\"}"})
 		_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 		if err != nil {
-			log.Fatal(err)
+			log.Error(err)
 		}
 
 		w.WriteHeader(200)
@@ -57,6 +59,7 @@ func main() {
 		}
 	})
 
+    log.Infof("Listening on port :%d", listenPort)
 	err := http.ListenAndServe(fmt.Sprintf(":%d", listenPort), router)
 	if err != nil {
 		log.Fatal(err)
@@ -66,16 +69,13 @@ func main() {
 func invokeLogsHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
 	log.Println(invokeId)
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.Error(err)
+	var logResponse lsapi.LogResponse
+	if err := json.NewDecoder(r.Body).Decode(&logResponse); err != nil {
+		log.Error("invalid logs payload: ", err)
+	} else {
+		log.Println("log result: " + logResponse.Logs)
 	}
-	log.Println("log result: " + string(bodyBytes))
-}
-
-type InvokeRequest struct {
-	InvokeId string `json:"invoke-id"`
-	Payload  string `json:"payload"`
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -84,26 +84,32 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println(runtime_id + " + " + status)
 	if status == "ready" {
 		go func() {
-			invokeRequest, _ := json.Marshal(InvokeRequest{InvokeId: "12345", Payload: "{\"counter\":0}"})
+			invokeRequest, _ := json.Marshal(lsapi.InvokeRequest{InvokeId: "12345", Payload: "{\"counter\":0}"})
 			_, err := http.Post(invokeUrl, "application/json", bytes.NewReader(invokeRequest))
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err)
 			}
 		}()
 	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func invokeResponseHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
-	log.Println(invokeId)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Error(err)
 	}
-	log.Println("result: " + string(bodyBytes))
+	log.WithFields(log.Fields{"invoke_id": invokeId, "body": string(bodyBytes)}).Info("invokeResponseHandler: received response")
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func invokeErrorHandler(w http.ResponseWriter, r *http.Request) {
 	invokeId := chi.URLParam(r, "invoke_id")
-	log.Println(invokeId)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Error(err)
+	}
+	log.WithFields(log.Fields{"invoke_id": invokeId, "body": string(bodyBytes)}).Info("invokeErrorHandler: received error")
+	w.WriteHeader(http.StatusAccepted)
 }

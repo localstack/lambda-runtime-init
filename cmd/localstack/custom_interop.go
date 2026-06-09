@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi/v5"
 	log "github.com/sirupsen/logrus"
 )
@@ -50,20 +51,35 @@ func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) 
 	return nil
 }
 
-// The InvokeRequest is sent by LocalStack to trigger an invocation
-type InvokeRequest struct {
-	InvokeId           string `json:"invoke-id"`
-	InvokedFunctionArn string `json:"invoked-function-arn"`
-	Payload            string `json:"payload"`
-	TraceId            string `json:"trace-id"`
+// SendLogs posts the captured invocation logs to LocalStack.
+func (l *LocalStackAdapter) SendLogs(invokeId string, logs lsapi.LogResponse) error {
+	serialized, err := json.Marshal(logs)
+	if err != nil {
+		return err
+	}
+	_, err = http.Post(l.UpstreamEndpoint+"/invocations/"+invokeId+"/logs", "application/json", bytes.NewReader(serialized))
+	return err
 }
 
-// The ErrorResponse is sent TO LocalStack when encountering an error
-type ErrorResponse struct {
-	ErrorMessage string   `json:"errorMessage"`
-	ErrorType    string   `json:"errorType,omitempty"`
-	RequestId    string   `json:"requestId,omitempty"`
-	StackTrace   []string `json:"stackTrace,omitempty"`
+// SendResult posts the invocation result body to LocalStack.
+// If isError is false, the body is also inspected for an "errorType" field — its
+// presence indicates a Lambda function error and routes the result to /error.
+func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError bool) error {
+	if !isError {
+		var fields map[string]any
+		if json.Unmarshal(body, &fields) == nil {
+			_, isError = fields["errorType"]
+		}
+	}
+	endpoint := "/invocations/" + invokeId + "/response"
+	if isError {
+		log.Infoln("Sending to /error")
+		endpoint = "/invocations/" + invokeId + "/error"
+	} else {
+		log.Infoln("Sending to /response")
+	}
+	_, err := http.Post(l.UpstreamEndpoint+endpoint, "application/json", bytes.NewReader(body))
+	return err
 }
 
 func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
@@ -81,7 +97,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 	go func() {
 		r := chi.NewRouter()
 		r.Post("/invoke", func(w http.ResponseWriter, r *http.Request) {
-			invokeR := InvokeRequest{}
+			invokeR := lsapi.InvokeRequest{}
 			bytess, err := io.ReadAll(r.Body)
 			if err != nil {
 				log.Error(err)
@@ -123,7 +139,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
 						isErr = true
-						errorResponse := ErrorResponse{
+						errorResponse := lsapi.ErrorResponse{
 							ErrorMessage: fmt.Sprintf(
 								"%s %s Task timed out after %d.00 seconds",
 								time.Now().Format("2006-01-02T15:04:05Z"),
@@ -157,31 +173,11 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
 				PrintEndReports(invokeR.InvokeId, "", memorySize, invokeStart, timeoutDuration, logCollector)
 
-				serializedLogs, err2 := json.Marshal(logCollector.getLogs())
-				if err2 == nil {
-					_, err2 = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/logs", "application/json", bytes.NewReader(serializedLogs))
-					// TODO: handle err
+				if err2 := server.localStackAdapter.SendLogs(invokeR.InvokeId, logCollector.getLogs()); err2 != nil {
+					log.Error("failed to send logs to LocalStack: ", err2)
 				}
-
-				var errR map[string]any
-				marshalErr := json.Unmarshal(invokeResp.Body, &errR)
-
-				if !isErr && marshalErr == nil {
-					_, isErr = errR["errorType"]
-				}
-
-				if isErr {
-					log.Infoln("Sending to /error")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/error", "application/json", bytes.NewReader(invokeResp.Body))
-					if err != nil {
-						log.Error(err)
-					}
-				} else {
-					log.Infoln("Sending to /response")
-					_, err = http.Post(server.upstreamEndpoint+"/invocations/"+invokeR.InvokeId+"/response", "application/json", bytes.NewReader(invokeResp.Body))
-					if err != nil {
-						log.Error(err)
-					}
+				if err2 := server.localStackAdapter.SendResult(invokeR.InvokeId, invokeResp.Body, isErr); err2 != nil {
+					log.Error("failed to send result to LocalStack: ", err2)
 				}
 			}()
 

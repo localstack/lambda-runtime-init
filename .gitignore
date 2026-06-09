@@ -1,6 +1,8 @@
 /pkg
 /build
 /bin
+aws-lambda-rie
+ls-mock
 *.swp
 *.iml
 tags

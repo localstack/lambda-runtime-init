@@ -3,11 +3,9 @@ package main
 import (
 	"strings"
 	"sync"
-)
 
-type LogResponse struct {
-	Logs string `json:"logs"`
-}
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
+)
 
 type LogCollector struct {
 	mutex       *sync.Mutex
@@ -37,10 +35,10 @@ func (lc *LogCollector) reset() {
 	lc.RuntimeLogs = []string{}
 }
 
-func (lc *LogCollector) getLogs() LogResponse {
+func (lc *LogCollector) getLogs() lsapi.LogResponse {
 	lc.mutex.Lock()
 	defer lc.mutex.Unlock()
-	response := LogResponse{
+	response := lsapi.LogResponse{
 		Logs: strings.Join(lc.RuntimeLogs, ""),
 	}
 	lc.RuntimeLogs = []string{}
