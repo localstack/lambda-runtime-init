@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -13,6 +14,16 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	log "github.com/sirupsen/logrus"
+)
+
+const (
+	// defaultInitPhaseTimeoutSeconds matches AWS's 10s init-phase limit. When init exceeds
+	// this, the init is retried at the time of the first invocation under the function
+	// timeout ("suppressed init"). Override via LOCALSTACK_INIT_PHASE_TIMEOUT.
+	defaultInitPhaseTimeoutSeconds = 10
+	// initResetTimeoutMs bounds the reset that aborts a timed-out init so rapidcore re-runs
+	// it on the first invocation.
+	initResetTimeoutMs = 2000
 )
 
 type LsOpts struct {
@@ -179,19 +190,11 @@ func main() {
 	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
 	tracer := NewLocalStackTracer()
 
-	// Create LocalStack adapter upfront so it can be shared with the events API and interop server
+	// Create LocalStack adapter upfront so it can be shared with the interop server
 	lsAdapter := &LocalStackAdapter{
 		UpstreamEndpoint: lsOpts.RuntimeEndpoint,
 		RuntimeId:        lsOpts.RuntimeId,
 	}
-
-	// Events API forwards runtime fault events (unexpected exits) to LocalStack as error callbacks
-	lsEventsAPI := NewLocalStackEventsAPI(lsAdapter)
-
-	// Supervisor intercepts runtime process terminations and emits fault events via the events API
-	supervisorCtx, cancelSupervisor := context.WithCancel(context.Background())
-
-	localStackSupv := NewLocalStackSupervisor(supervisorCtx, lsEventsAPI)
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -200,15 +203,11 @@ func main() {
 		AddShutdownFunc(func() {
 			log.Debugln("Stopping file watcher")
 			cancelFileWatcher()
-			log.Debugln("Stopping supervisor")
-			cancelSupervisor()
 		}).
 		SetExtensionsFlag(true).
 		SetInitCachingFlag(true).
 		SetLogsEgressAPI(localStackLogsEgressApi).
-		SetTracer(tracer).
-		SetEventsAPI(lsEventsAPI).
-		SetSupervisor(localStackSupv)
+		SetTracer(tracer)
 
 	// Corresponds to the 'AWS_LAMBDA_RUNTIME_API' environment variable.
 	// We need to ensure the runtime server is up before the INIT phase,
@@ -266,12 +265,44 @@ func main() {
 	log.Debugln("Starting runtime init.")
 	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
 
+	initPhaseTimeoutSeconds := defaultInitPhaseTimeoutSeconds
+	if v := os.Getenv("LOCALSTACK_INIT_PHASE_TIMEOUT"); v != "" {
+		if parsed, perr := strconv.Atoi(v); perr == nil {
+			initPhaseTimeoutSeconds = parsed
+		} else {
+			log.Warnln("Invalid LOCALSTACK_INIT_PHASE_TIMEOUT, using default:", perr)
+		}
+	}
+
 	log.Debugln("Awaiting initialization of runtime init.")
-	if err := interopServer.delegate.AwaitInitialized(); err != nil {
-		// Error cases: ErrInitDoneFailed or ErrInitResetReceived
+	initResp, timedOut, err := interopServer.delegate.AwaitInitializedWithTimeout(
+		time.Duration(initPhaseTimeoutSeconds) * time.Second,
+	)
+	switch {
+	case timedOut:
+		// AWS limits the init phase to 10s. When exceeded, init is retried at the time of the
+		// first invocation under the function timeout ("suppressed init"). We report the init
+		// timeout and signal ready so LocalStack dispatches the first invoke, then reset the
+		// in-progress init so rapidcore re-runs a fresh Init phase when that invoke arrives.
+		// The reset failure is intentionally left unconsumed here so the invoke path's
+		// Reserve()/awaitInitialized() picks it up and triggers the suppressed init.
+		log.Debugln("Init phase timed out; deferring to suppressed init on first invocation.")
+		interopServer.ReportInitTimeout()
+		go func() {
+			if _, resetErr := interopServer.delegate.Reset("initTimeout", initResetTimeoutMs); resetErr != nil {
+				log.Debugf("Reset after init timeout returned: %s", resetErr)
+			}
+		}()
+	case err != nil:
+		// Error cases: ErrInitDoneFailed (runtime crashed/exited or called /init/error) or
+		// ErrInitResetReceived (init-phase reset). When the runtime reported its own error via
+		// /init/error, SendInitErrorResponse already forwarded it and SendInitError is a no-op.
+		// When the runtime instead crashed/exited without reporting, this is the only callback
+		// that notifies LocalStack (otherwise it waits until the environment timeout).
 		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
-		// NOTE: Sending the error status to LocalStack is handled beforehand in the custom_interop.go through the
-		// callback SendInitErrorResponse because it contains the correct error response payload.
+		if !errors.Is(err, rapidcore.ErrInitResetReceived) {
+			interopServer.SendInitError(initResp.InitErrorType, initResp.InitErrorMessage)
+		}
 		return
 	}
 

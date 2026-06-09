@@ -12,14 +12,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/core/statejson"
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -28,11 +31,23 @@ type CustomInteropServer struct {
 	localStackAdapter *LocalStackAdapter
 	port              string
 	upstreamEndpoint  string
+	// logCollector accumulates the runtime's stdout/stderr plus the synthetic START/REPORT/
+	// INIT_REPORT lines that are flushed to LocalStack with each invocation's logs.
+	logCollector *LogCollector
 	// initStart is set once in Init() and warmStart is flipped on the first invoke.
 	// Both are accessed only from the single sequential init -> invoke flow (the RIE
 	// processes one invocation at a time), so they need no additional synchronization.
 	initStart time.Time
 	warmStart bool
+	// initTimedOut is set by ReportInitTimeout when the init phase exceeds its timeout. It is
+	// written from the init-await flow and read from the invoke flow, so it uses atomic access.
+	// When set, the first invocation's REPORT omits Init Duration (init was already reported as
+	// timed out and is re-run as a suppressed init during that invocation).
+	initTimedOut atomic.Bool
+	// initErrorForwarded is set once the runtime's own /init/error has been forwarded to
+	// LocalStack via SendInitErrorResponse, so the crash-path fallback (SendInitError) does
+	// not send a duplicate error status for the same failed initialization.
+	initErrorForwarded atomic.Bool
 }
 
 type LocalStackAdapter struct {
@@ -96,13 +111,13 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return nil
 }
 
-
 func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate interop.Server, logCollector *LogCollector) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
 		delegate:          delegate.(*rapidcore.Server),
 		port:              lsOpts.InteropPort,
 		upstreamEndpoint:  lsOpts.RuntimeEndpoint,
 		localStackAdapter: adapter,
+		logCollector:      logCollector,
 	}
 
 	// TODO: extract this
@@ -126,7 +141,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				_, _ = fmt.Fprintf(logCollector, "START RequestId: %s Version: %s\n", invokeR.InvokeId, functionVersion)
 
 				initDuration := ""
-				if !server.warmStart && !invokeR.IsInitRetry {
+				if !server.warmStart && !server.initTimedOut.Load() {
 					initTimeMS := float64(time.Since(server.initStart).Nanoseconds()) / float64(time.Millisecond)
 					initDuration = fmt.Sprintf("Init Duration: %.2f ms\t", initTimeMS)
 				}
@@ -225,9 +240,15 @@ func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.E
 	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
-// SendInitErrorResponse forwards the init error to LocalStack and then propagates it to the delegate.
+// SendInitErrorResponse forwards the init error reported by the runtime (via /init/error) to
+// LocalStack and then propagates it to the delegate. It marks initErrorForwarded so the
+// crash-path fallback in main.go (SendInitError) does not send a duplicate error status for
+// the same failed initialization.
 func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendInitErrorResponse called")
+	// Mark synchronously, before sending: this runs in the init flow before
+	// AwaitInitializedWithDetails unblocks in main.go, so the fallback observes the flag.
+	c.initErrorForwarded.Store(true)
 
 	// Deserialize the raw payload so we can include the requestId and structured fields.
 	var parsed struct {
@@ -267,6 +288,49 @@ func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeRes
 	return c.delegate.SendInitErrorResponse(resp)
 }
 
+// SendInitError reports a structured init failure to LocalStack when the runtime failed to
+// initialize WITHOUT calling /init/error itself (e.g. it crashed, called sys.exit, or had an
+// invalid entrypoint). The init failure is detected by the existing rapidcore machinery
+// (watchEvents -> InitFailure -> AwaitInitializedWithDetails) and surfaced to main.go.
+// It is a no-op if SendInitErrorResponse already forwarded the runtime's own structured error.
+func (c *CustomInteropServer) SendInitError(errType fatalerror.ErrorType, errMsg error) {
+	if c.initErrorForwarded.Load() {
+		log.Debug("Init error already forwarded to LocalStack; skipping duplicate")
+		return
+	}
+
+	if errType == "" {
+		errType = fatalerror.RuntimeExit
+	}
+
+	message := "Runtime exited during initialization"
+	if errMsg != nil {
+		message = errMsg.Error()
+	}
+
+	// Match AWS's fault message format "RequestId: <id> Error: <msg>". No invocation is active
+	// during the init phase (LocalStack only dispatches an invoke after the runtime reports
+	// ready), so synthesize a request ID, preferring the current invoke ID if one exists.
+	requestID := c.delegate.GetCurrentInvokeID()
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+
+	payload, err := json.Marshal(lsapi.ErrorResponse{
+		ErrorType:    string(errType),
+		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", requestID, message),
+	})
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal init error response")
+		return
+	}
+
+	if err := c.localStackAdapter.SendStatus(Error, payload); err != nil {
+		log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
+			Error("Failed to send init error to LocalStack")
+	}
+}
+
 func (c *CustomInteropServer) GetCurrentInvokeID() string {
 	log.Traceln("GetCurrentInvokeID called")
 	return c.delegate.GetCurrentInvokeID()
@@ -281,6 +345,16 @@ func (c *CustomInteropServer) Init(i *interop.Init, invokeTimeoutMs int64) error
 	log.Traceln("Init called")
 	c.initStart = time.Now()
 	return c.delegate.Init(i, invokeTimeoutMs)
+}
+
+// ReportInitTimeout emits an AWS-style INIT_REPORT timeout line into the log collector and
+// marks the init as timed out. The init is then re-run as a suppressed init during the first
+// invocation (under the function timeout), and that invocation's REPORT omits Init Duration.
+func (c *CustomInteropServer) ReportInitTimeout() {
+	c.initTimedOut.Store(true)
+	initTimeMS := float64(time.Since(c.initStart).Nanoseconds()) / float64(time.Millisecond)
+	_, _ = fmt.Fprintf(c.logCollector,
+		"INIT_REPORT Init Duration: %.2f ms\tPhase: init\tStatus: timeout\n", initTimeMS)
 }
 
 func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {
