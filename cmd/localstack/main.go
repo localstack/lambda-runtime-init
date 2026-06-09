@@ -43,6 +43,7 @@ type LsOpts struct {
 	EnableXRayTelemetry string
 	PostInvokeWaitMS    string
 	MaxPayloadSize      string
+	InitPhaseTimeout    string
 }
 
 func GetEnvOrDie(env string) string {
@@ -60,12 +61,13 @@ func InitLsOpts() *LsOpts {
 		RuntimeId:       GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
 		AccountId:       GetenvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
 		// optional with default
-		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
-		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
-		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
-		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
-		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
-		MaxPayloadSize:  GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
+		InteropPort:      GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
+		InitTracingPort:  GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
+		User:             GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
+		InitLogLevel:     GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
+		EdgePort:         GetenvWithDefault("EDGE_PORT", "4566"),
+		MaxPayloadSize:   GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
+		InitPhaseTimeout: GetenvWithDefault("LOCALSTACK_INIT_PHASE_TIMEOUT", strconv.Itoa(defaultInitPhaseTimeoutSeconds)),
 		// optional or empty
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
@@ -93,6 +95,7 @@ func UnsetLsEnvs() {
 		"LOCALSTACK_POST_INVOKE_WAIT_MS",
 		"LOCALSTACK_FUNCTION_ACCOUNT_ID",
 		"LOCALSTACK_MAX_PAYLOAD_SIZE",
+		"LOCALSTACK_INIT_PHASE_TIMEOUT",
 		"LOCALSTACK_CHMOD_PATHS",
 
 		// Docker container ID
@@ -271,12 +274,10 @@ func main() {
 	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
 
 	initPhaseTimeoutSeconds := defaultInitPhaseTimeoutSeconds
-	if v := os.Getenv("LOCALSTACK_INIT_PHASE_TIMEOUT"); v != "" {
-		if parsed, perr := strconv.Atoi(v); perr == nil {
-			initPhaseTimeoutSeconds = parsed
-		} else {
-			log.Warnln("Invalid LOCALSTACK_INIT_PHASE_TIMEOUT, using default:", perr)
-		}
+	if parsed, perr := strconv.Atoi(lsOpts.InitPhaseTimeout); perr == nil {
+		initPhaseTimeoutSeconds = parsed
+	} else {
+		log.Warnln("Invalid LOCALSTACK_INIT_PHASE_TIMEOUT, using default:", perr)
 	}
 
 	log.Debugln("Awaiting initialization of runtime init.")
