@@ -734,21 +734,14 @@ func (s *Server) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invo
 	return err
 }
 
-// InitCompletionResponse carries the structured init failure cause (error type and
-// message) extracted from the InitFailure. It is exposed via AwaitInitializedWithDetails
-// so standalone callers can report the failure instead of only seeing the sentinel error.
-type InitCompletionResponse struct {
+type initCompletionResponse struct {
 	InitErrorType    fatalerror.ErrorType
 	InitErrorMessage error
 }
 
-func (s *Server) awaitInitialized() (InitCompletionResponse, error) {
+func (s *Server) awaitInitialized() (initCompletionResponse, error) {
 	initFailure, awaitingInitStatus := <-s.getInitFailuresChan()
-	return s.interpretInitFailure(initFailure, awaitingInitStatus)
-}
-
-func (s *Server) interpretInitFailure(initFailure interop.InitFailure, awaitingInitStatus bool) (InitCompletionResponse, error) {
-	resp := InitCompletionResponse{}
+	resp := initCompletionResponse{}
 
 	if initFailure.ResetReceived {
 		// Resets during Init are only received in standalone
@@ -775,51 +768,15 @@ func (s *Server) interpretInitFailure(initFailure interop.InitFailure, awaitingI
 // AwaitInitialized waits until init is complete. It must be idempotent,
 // since it can be called twice when a caller wants to wait until init is complete
 func (s *Server) AwaitInitialized() error {
-	_, err := s.AwaitInitializedWithDetails()
-	return err
-}
-
-// AwaitInitializedWithDetails behaves like AwaitInitialized but, on failure, also returns
-// the structured init error (type and message) carried by the InitFailure. This lets
-// standalone callers report the failure to their control plane instead of only observing
-// the sentinel error (ErrInitDoneFailed / ErrInitResetReceived).
-func (s *Server) AwaitInitializedWithDetails() (InitCompletionResponse, error) {
-	resp, err := s.awaitInitialized()
-	if err != nil {
-		if releaseErr := s.Release(); releaseErr != nil {
+	if _, err := s.awaitInitialized(); err != nil {
+		if releaseErr := s.Release(); err != nil {
 			log.Infof("Error releasing after init failure %s: %s", err, releaseErr)
 		}
 		s.setRuntimeState(runtimeInitFailed)
-		return resp, err
+		return err
 	}
 	s.setRuntimeState(runtimeInitComplete)
-	return resp, nil
-}
-
-// AwaitInitializedWithTimeout behaves like AwaitInitializedWithDetails but returns early if
-// init does not complete within the timeout. On timeout it returns timedOut=true WITHOUT
-// consuming the init-failures channel, so a subsequent invoke's Reserve()/awaitInitialized()
-// can still observe the init outcome and trigger the suppressed init. The caller is expected
-// to reset the in-progress init so that outcome becomes available.
-func (s *Server) AwaitInitializedWithTimeout(timeout time.Duration) (resp InitCompletionResponse, timedOut bool, err error) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-timer.C:
-		return InitCompletionResponse{}, true, nil
-	case initFailure, awaitingInitStatus := <-s.getInitFailuresChan():
-		resp, err = s.interpretInitFailure(initFailure, awaitingInitStatus)
-		if err != nil {
-			if releaseErr := s.Release(); releaseErr != nil {
-				log.Infof("Error releasing after init failure %s: %s", err, releaseErr)
-			}
-			s.setRuntimeState(runtimeInitFailed)
-			return resp, false, err
-		}
-		s.setRuntimeState(runtimeInitComplete)
-		return resp, false, nil
-	}
+	return nil
 }
 
 func (s *Server) AwaitRelease() (*statejson.ReleaseResponse, error) {
