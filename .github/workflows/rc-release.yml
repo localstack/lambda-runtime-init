@@ -1,0 +1,105 @@
+name: RC Release
+
+# Builds the RIE binaries from an open PR and publishes them as a throwaway GitHub
+# pre-release, so the unmerged change can be tested against localstack-pro CI without
+# merging or cutting a real release. A developer consumes the resulting tag via
+# LAMBDA_INIT_RELEASE_VERSION=<rc-tag> when running localstack-pro CI.
+#
+# Trigger: add the label "trigger:rc-release" to a PR.
+# Cleanup: the pre-release + tag are deleted automatically when the PR is closed.
+
+on:
+  pull_request:
+    types: [labeled, closed]
+
+permissions:
+  contents: write        # create / delete the pre-release and its tag
+  pull-requests: write   # comment the resulting tag back on the PR
+
+# Avoid concurrent RC builds for the same PR; a newer commit supersedes an in-flight build.
+concurrency:
+  group: rc-release-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  rc-release:
+    if: github.event.action == 'labeled' && github.event.label.name == 'trigger:rc-release'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Compute RC tag
+        id: rc
+        run: |
+          short_sha="$(git rev-parse --short HEAD)"
+          echo "tag=v0.0.0-rc.pr${PR_NUMBER}-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests
+        run: make tests-with-docker
+
+      - name: Build binaries
+        env:
+          RELEASE_BUILD_LINKER_FLAGS: "-s -w"
+        run: make compile-with-docker-all
+
+      - name: Publish RC pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.rc.outputs.tag }}
+          target_commitish: ${{ github.event.pull_request.head.sha }}
+          name: "RC ${{ steps.rc.outputs.tag }} (PR #${{ github.event.pull_request.number }})"
+          body: |
+            Throwaway RC pre-release for testing PR #${{ github.event.pull_request.number }} against localstack-pro CI.
+            Built from ${{ github.event.pull_request.head.sha }}. Auto-deleted when the PR is closed.
+            Note: integ-tests are skipped in RC builds; localstack-pro CI is the real test.
+          prerelease: true
+          files: |
+            bin/aws-lambda-rie-x86_64
+            bin/aws-lambda-rie-arm64
+
+      - name: Comment RC tag on PR
+        env:
+          RC_TAG: ${{ steps.rc.outputs.tag }}
+        run: |
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RC_TAG}"
+          gh pr comment "$PR_NUMBER" --body "$(cat <<EOF
+          🧪 **RC pre-release ready: \`${RC_TAG}\`**
+
+          Test this PR against localstack-pro CI by setting:
+          \`\`\`
+          LAMBDA_INIT_RELEASE_VERSION=${RC_TAG}
+          \`\`\`
+
+          Assets:
+          - ${base_url}/aws-lambda-rie-x86_64
+          - ${base_url}/aws-lambda-rie-arm64
+
+          _Built from \`${HEAD_SHA}\`. integ-tests skipped in RC builds. This pre-release is auto-deleted when the PR is closed._
+          EOF
+          )"
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Delete RC pre-releases for this PR
+        run: |
+          prefix="v0.0.0-rc.pr${PR_NUMBER}-"
+          tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq ".[].tagName | select(startswith(\"${prefix}\"))")"
+          if [ -z "$tags" ]; then
+            echo "No RC pre-releases found for PR #${PR_NUMBER}."
+            exit 0
+          fi
+          echo "$tags" | while read -r tag; do
+            echo "Deleting ${tag}"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          done
