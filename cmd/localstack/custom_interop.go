@@ -30,45 +30,14 @@ type CustomInteropServer struct {
 	localStackAdapter *LocalStackAdapter
 	port              string
 	upstreamEndpoint  string
-	// logCollector accumulates the runtime's stdout/stderr plus the synthetic START/REPORT/
-	// INIT_REPORT lines that are flushed to LocalStack with each invocation's logs.
-	logCollector *LogCollector
-	// eventsAPI provides rapid's authoritative Init-phase duration (see events.go), used for
-	// the REPORT/INIT_REPORT log lines instead of wall-clock measurements at invoke arrival.
+	// eventsAPI renders the synthetic START/INIT_REPORT log lines from rapid's lifecycle
+	// events and records the init outcome (error type, cold-start duration) — see events.go.
 	eventsAPI *LocalStackEventsAPI
-	// initStart is set once in Init() and warmStart is flipped on the first invoke.
-	// Both are accessed only from the single sequential init -> invoke flow (the RIE
-	// processes one invocation at a time), so they need no additional synchronization.
-	initStart time.Time
-	warmStart bool
-	// initTimedOut is set by ReportInitTimeout when the init phase exceeds its timeout. It is
-	// written from the init-await flow and read from the invoke flow, so it uses atomic access.
-	// When set, the first invocation's REPORT omits Init Duration (init was already reported as
-	// timed out and is re-run as a suppressed init during that invocation).
-	initTimedOut atomic.Bool
-	// initErrorForwarded is set once the runtime's own /init/error has been forwarded to
-	// LocalStack via SendInitErrorResponse, so the crash-path fallback (SendInitError) does
-	// not send a duplicate error status for the same failed initialization. Unlike
-	// initErrorType below it is never cleared: it only guards the one-shot init-phase report.
-	initErrorForwarded atomic.Bool
-	// initErrorType holds rapidcore's scrubbed fatal error type (e.g. Runtime.Unknown) when init
-	// failed, used to render the INIT_REPORT(phase=invoke) and REPORT Status/Error Type lines for
-	// the on-demand folded-into-invoke path. Stores a string; empty/unset means init did not fail.
-	// It persists while invocations keep failing (each one re-runs the init as a suppressed init
-	// and AWS re-emits the failure envelope), and is cleared by the invoke handler once an
-	// invocation succeeds so a recovered environment is not tainted by the original failure.
-	initErrorType atomic.Value
-	// onDemand is true for on-demand functions, where AWS folds a failed cold-start init into
-	// the first invocation (suppressed init). For these we do NOT report init failures via
-	// /status/error; instead we signal ready and let the first invoke surface the error with
-	// the full INIT_REPORT/START/END/REPORT envelope. Provisioned concurrency and Managed
-	// Instances keep the provisioning-time /status/error model. SnapStart environments are
-	// also classified on-demand here (LocalStack sets AWS_LAMBDA_INITIALIZATION_TYPE=on-demand
-	// for them and initializes them lazily at the first invoke, not at version publish), so the
-	// fold-into-invoke model applies to them too.
-	// TODO: set AWS_LAMBDA_INITIALIZATION_TYPE=snap-start on the LocalStack side for env-var
-	// parity with AWS once SnapStart environments get their own initialization type.
-	onDemand bool
+	// initErrorPayload stashes the structured error payload the runtime reported via
+	// /init/error ([]byte), so ReportInitFailure can forward the runtime's own error to
+	// LocalStack instead of a synthesized one. Written from the runtime API handler flow and
+	// read from the main flow after init failed, hence atomic.
+	initErrorPayload atomic.Value
 }
 
 type LocalStackAdapter struct {
@@ -136,9 +105,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 		port:              lsOpts.InteropPort,
 		upstreamEndpoint:  lsOpts.RuntimeEndpoint,
 		localStackAdapter: adapter,
-		logCollector:      logCollector,
 		eventsAPI:         eventsAPI,
-		onDemand:          GetenvWithDefault("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand") == "on-demand",
 	}
 
 	// TODO: extract this
@@ -158,33 +125,16 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				}
 
 				invokeResp := &standalone.ResponseWriterProxy{}
-				// The synthetic START line is emitted via LocalStackEventsAPI.SendInvokeStart so it
-				// lands after any inline (suppressed) init, matching AWS — see events.go.
-
-				initErrType, _ := server.initErrorType.Load().(string)
+				// The synthetic START and INIT_REPORT lines are emitted via LocalStackEventsAPI
+				// from rapid's lifecycle events, so they land at the AWS-faithful points (e.g.
+				// after an inline suppressed init's own logs) — see events.go.
 
 				// First invocation into a successfully initialized on-demand environment: REPORT
-				// carries the Init phase duration as measured by rapid (init start -> init end).
-				// Provisioned concurrency / Managed Instances initialize at provisioning time and
-				// AWS omits Init Duration from their invokes' REPORT lines.
+				// carries the Init phase duration as measured by rapid (take-once; empty on warm
+				// starts, failed/timed-out inits, and non-on-demand environments).
 				initDuration := ""
-				if server.onDemand && !server.warmStart && !server.initTimedOut.Load() && initErrType == "" {
-					if initTimeMS, ok := server.eventsAPI.InitDurationMS(); ok {
-						initDuration = fmt.Sprintf("Init Duration: %.2f ms\t", initTimeMS)
-					}
-				}
-				server.warmStart = true
-
-				// On-demand init failure folded into this invocation (AWS suppressed init): emit
-				// the INIT_REPORT(phase=invoke) line before START (emitted during Invoke below),
-				// reporting the failed init's duration (rapid's measurement when available; the
-				// wall-clock fallback covers inits that died before emitting INIT_REPORT).
-				if initErrType != "" {
-					initTimeMS, ok := server.eventsAPI.InitDurationMS()
-					if !ok {
-						initTimeMS = millisSince(server.initStart)
-					}
-					fprintInitReport(logCollector, initTimeMS, "invoke", "error", initErrType)
+				if initTimeMS, ok := server.eventsAPI.TakeColdStartInitDuration(); ok {
+					initDuration = fmt.Sprintf("Init Duration: %.2f ms\t", initTimeMS)
 				}
 
 				invokeStart := time.Now()
@@ -209,7 +159,12 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
 				status := ""
-				if err != nil {
+				if err == nil {
+					// The invocation succeeded: if an earlier init failure was folded into it
+					// and the suppressed init re-run recovered, the result stands on its own —
+					// AWS reports it as successful — so clear the recorded init failure.
+					server.eventsAPI.ClearInitError()
+				} else {
 					switch {
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
@@ -232,23 +187,16 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 							log.Fatalln("unable to write to response")
 						}
 					case errors.Is(err, rapidcore.ErrInvokeDoneFailed):
-						// we can actually just continue here, error message is sent below
+						// The error response body was already written by rapid and is sent below.
+						// When an init failure was folded into this invocation (AWS suppressed
+						// init), the REPORT additionally carries the failure status and the
+						// scrubbed fatal error type (e.g. Runtime.Unknown).
+						if errType := server.eventsAPI.InitErrorType(); errType != "" {
+							isErr = true
+							status = "Status: error\tError Type: " + errType
+						}
 					default:
 						log.Fatalln(err)
-					}
-				}
-				// On-demand init failure folded into this invocation: when the suppressed init
-				// re-run (and thus the invoke) failed again, the REPORT carries the failure status
-				// and rapidcore's scrubbed fatal error type (e.g. Runtime.Unknown). When the
-				// invocation succeeded (the suppressed re-init recovered from a transient init
-				// failure), the result stands on its own — AWS reports it as successful — and the
-				// cached init failure is cleared so later invocations are not tainted by it.
-				if initErrType != "" {
-					if err != nil {
-						isErr = true
-						status = "Status: error\tError Type: " + initErrType
-					} else {
-						server.initErrorType.Store("")
 					}
 				}
 				// optional sleep. can be used for debugging purposes
@@ -294,93 +242,42 @@ func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.E
 	return c.delegate.SendErrorResponse(invokeID, resp)
 }
 
-// SendInitErrorResponse forwards the init error reported by the runtime (via /init/error) to
-// LocalStack and then propagates it to the delegate. It marks initErrorForwarded so the
-// crash-path fallback in main.go (SendInitError) does not send a duplicate error status for
-// the same failed initialization.
-func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) (err error) {
+// SendInitErrorResponse stashes the init error reported by the runtime (via /init/error) for
+// ReportInitFailure and propagates it to the delegate, which caches it so the first invoke
+// can surface it. The delegate's error is returned because the /runtime/init/error handler
+// renders an interop error to the runtime based on it (e.g. ErrResponseSent during a
+// suppressed init).
+func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
 	log.Traceln("SendInitErrorResponse called")
-	// Mark synchronously, before sending: this runs in the init flow before
-	// AwaitInitializedWithDetails unblocks in main.go, so the fallback observes the flag.
-	c.initErrorForwarded.Store(true)
-	// Record rapidcore's scrubbed fatal error type so the folded-into-invoke path can render the
-	// INIT_REPORT(phase=invoke) and REPORT Status/Error Type lines (on-demand).
-	c.initErrorType.Store(string(resp.FunctionError.Type))
-
-	// Always cache the structured error in the delegate so the first invoke can surface it, and
-	// return its error: the /runtime/init/error handler renders an interop error to the runtime
-	// based on it (e.g. ErrResponseSent during a suppressed init).
-	defer func() { err = c.delegate.SendInitErrorResponse(resp) }()
-
-	// On-demand folds the failed init into the first invocation, which carries the error and
-	// logs; reporting it here via /status/error too would race the invoke and fail the env
-	// startup before the invoke runs. PC/SnapStart/MI report at provisioning time below.
-	if c.onDemand {
-		return nil
-	}
-
-	// Forward the runtime's structured payload as-is and only inject the requestId. Decoding
-	// into a map rather than a typed struct preserves fields exactly as the runtime emitted
-	// them — in particular an empty but present "stackTrace": [] (e.g. Runtime.HandlerNotFound),
-	// which a typed struct with omitempty would drop on re-marshal.
-	var payload map[string]any
-	if err := json.Unmarshal(resp.Payload, &payload); err != nil {
-		log.WithError(err).Warn("Failed to parse init error payload; forwarding raw payload")
-		if err := c.localStackAdapter.SendStatus(Error, resp.Payload); err != nil {
-			log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
-				Error("Failed to send init error to LocalStack")
-		}
-		return nil
-	}
-
-	// No invocation is active during the init phase, so this is typically blank; AWS still
-	// includes a (blank) requestId in the init error payload.
-	payload["requestId"] = c.delegate.GetCurrentInvokeID()
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		log.WithError(err).Error("Failed to marshal adapted init error response")
-		body = resp.Payload
-	}
-
-	if err := c.localStackAdapter.SendStatus(Error, body); err != nil {
-		log.WithError(err).WithField("runtime-id", c.localStackAdapter.RuntimeId).
-			Error("Failed to send init error to LocalStack")
-	}
-	return nil
+	c.initErrorPayload.Store(resp.Payload)
+	return c.delegate.SendInitErrorResponse(resp)
 }
 
-// SendInitError reports a structured init failure to LocalStack when the runtime failed to
-// initialize WITHOUT calling /init/error itself (e.g. it crashed, called sys.exit, or had an
-// invalid entrypoint). The init failure is detected by the existing rapidcore machinery
-// (watchEvents -> InitFailure -> AwaitInitializedWithDetails) and surfaced to main.go.
-// It is a no-op if SendInitErrorResponse already forwarded the runtime's own structured error.
-func (c *CustomInteropServer) SendInitError(errType fatalerror.ErrorType, errMsg error) {
-	if c.initErrorForwarded.Load() {
-		log.Debug("Init error already forwarded to LocalStack; skipping duplicate")
-		return
-	}
-
-	if errType == "" {
-		errType = fatalerror.RuntimeExit
-	}
-
-	message := "Runtime exited during initialization"
-	if errMsg != nil {
-		message = errMsg.Error()
-	}
-
-	// Match AWS's fault message format "RequestId: <id> Error: <msg>". No invocation is active
-	// during the init phase (LocalStack only dispatches an invoke after the runtime reports
-	// ready), so the request id is blank — matching the /init/error path, which forwards AWS's
-	// blank init-phase requestId (see SendInitErrorResponse).
-	payload, err := json.Marshal(lsapi.ErrorResponse{
-		ErrorType:    string(errType),
-		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", c.delegate.GetCurrentInvokeID(), message),
-	})
-	if err != nil {
-		log.WithError(err).Error("Failed to marshal init error response")
-		return
+// ReportInitFailure reports a failed initialization to LocalStack via /status/error, failing
+// the environment's startup. It forwards the runtime's own /init/error payload when one was
+// reported, and synthesizes a structured error from the given type and message otherwise
+// (e.g. when the runtime crashed, called sys.exit, or had an invalid entrypoint).
+// Only main.go calls this, and only for environments that fail provisioning-time (extended
+// init: provisioned concurrency / Managed Instances); on-demand environments fold init
+// failures into the first invocation instead.
+func (c *CustomInteropServer) ReportInitFailure(errType fatalerror.ErrorType, message string) {
+	payload, _ := c.initErrorPayload.Load().([]byte)
+	if payload == nil {
+		// Match AWS's fault message format "RequestId: <id> Error: <msg>". No invocation is
+		// active during the init phase (LocalStack only dispatches invokes after the runtime
+		// reports ready), so the request id is blank — matching the /init/error path below,
+		// which forwards AWS's blank init-phase requestId.
+		body, err := json.Marshal(lsapi.ErrorResponse{
+			ErrorType:    string(errType),
+			ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", c.delegate.GetCurrentInvokeID(), message),
+		})
+		if err != nil {
+			log.WithError(err).Error("Failed to marshal init error response")
+			return
+		}
+		payload = body
+	} else if adapted := adaptInitErrorPayload(payload, c.delegate.GetCurrentInvokeID()); adapted != nil {
+		payload = adapted
 	}
 
 	if err := c.localStackAdapter.SendStatus(Error, payload); err != nil {
@@ -389,19 +286,24 @@ func (c *CustomInteropServer) SendInitError(errType fatalerror.ErrorType, errMsg
 	}
 }
 
-// RecordInitError records the structured init failure detected by rapidcore for runtimes that
-// failed WITHOUT calling /init/error (crash, sys.exit, invalid entrypoint), so the on-demand
-// folded-into-invoke path renders the same INIT_REPORT(phase=invoke) and REPORT Status/Error
-// Type lines as the /init/error-reported flavor. It must not overwrite a type already recorded
-// by SendInitErrorResponse: the runtime-reported error is the authoritative one.
-func (c *CustomInteropServer) RecordInitError(errType fatalerror.ErrorType) {
-	if recorded, _ := c.initErrorType.Load().(string); recorded != "" {
-		return
+// adaptInitErrorPayload injects the requestId into the runtime's structured /init/error
+// payload, preserving all other fields exactly as the runtime emitted them — in particular an
+// empty but present "stackTrace": [] (e.g. Runtime.HandlerNotFound), which a typed struct with
+// omitempty would drop on re-marshal. AWS includes a (blank) requestId in init error payloads.
+// Returns nil if the payload cannot be adapted (it is then forwarded unmodified).
+func adaptInitErrorPayload(payload []byte, requestID string) []byte {
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		log.WithError(err).Warn("Failed to parse init error payload; forwarding raw payload")
+		return nil
 	}
-	if errType == "" {
-		errType = fatalerror.RuntimeExit
+	fields["requestId"] = requestID
+	adapted, err := json.Marshal(fields)
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal adapted init error payload")
+		return nil
 	}
-	c.initErrorType.Store(string(errType))
+	return adapted
 }
 
 func (c *CustomInteropServer) GetCurrentInvokeID() string {
@@ -416,51 +318,7 @@ func (c *CustomInteropServer) SendRuntimeReady() error {
 
 func (c *CustomInteropServer) Init(i *interop.Init, invokeTimeoutMs int64) error {
 	log.Traceln("Init called")
-	c.initStart = time.Now()
 	return c.delegate.Init(i, invokeTimeoutMs)
-}
-
-// ReportInitTimeout emits an AWS-style INIT_REPORT timeout line into the log collector and
-// marks the init as timed out. The init is then re-run as a suppressed init during the first
-// invocation (under the function timeout), and that invocation's REPORT omits Init Duration.
-func (c *CustomInteropServer) ReportInitTimeout() {
-	c.initTimedOut.Store(true)
-	fprintInitReport(c.logCollector, millisSince(c.initStart), "init", "timeout", "")
-}
-
-// ReportInitPhaseError emits the AWS-style INIT_REPORT(phase=init, status=error) line for an
-// on-demand cold-start init that failed (e.g. a runtime crash or exit during module load).
-// AWS performs a suppressed double init: the failed cold-start init reports Phase: init here,
-// and the retried init folded into the first invocation reports Phase: invoke (see the invoke
-// handler). It is a no-op when no init error was recorded. The duration is rapid's measurement
-// of the Init phase when available, falling back to wall-clock for inits that died before
-// emitting their INIT_REPORT lifecycle event.
-func (c *CustomInteropServer) ReportInitPhaseError() {
-	errType, _ := c.initErrorType.Load().(string)
-	if errType == "" {
-		return
-	}
-	initTimeMS, ok := c.eventsAPI.InitDurationMS()
-	if !ok {
-		initTimeMS = millisSince(c.initStart)
-	}
-	fprintInitReport(c.logCollector, initTimeMS, "init", "error", errType)
-}
-
-// millisSince returns the wall-clock milliseconds elapsed since start.
-func millisSince(start time.Time) float64 {
-	return float64(time.Since(start).Nanoseconds()) / float64(time.Millisecond)
-}
-
-// fprintInitReport emits an AWS-style INIT_REPORT log line, e.g.
-// "INIT_REPORT Init Duration: 9999.27 ms\tPhase: init\tStatus: timeout" or
-// "INIT_REPORT Init Duration: 0.91 ms\tPhase: invoke\tStatus: error\tError Type: Runtime.ExitError".
-func fprintInitReport(w io.Writer, durationMS float64, phase string, status string, errorType string) {
-	_, _ = fmt.Fprintf(w, "INIT_REPORT Init Duration: %.2f ms\tPhase: %s\tStatus: %s", durationMS, phase, status)
-	if errorType != "" {
-		_, _ = fmt.Fprintf(w, "\tError Type: %s", errorType)
-	}
-	_, _ = fmt.Fprintln(w)
 }
 
 func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {

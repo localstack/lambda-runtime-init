@@ -201,9 +201,21 @@ func main() {
 		RuntimeId:        lsOpts.RuntimeId,
 	}
 
-	// Events API rides rapidcore's invoke lifecycle to emit the synthetic START log line after
-	// any inline (suppressed) init, matching AWS's ordering.
-	lsEventsAPI := NewLocalStackEventsAPI(logCollector)
+	// onDemand is true for on-demand functions, where AWS folds a failed cold-start init into
+	// the first invocation (suppressed init). For these we do NOT report init failures via
+	// /status/error; instead we signal ready and let the first invoke surface the error with
+	// the full INIT_REPORT/START/END/REPORT envelope. Provisioned concurrency and Managed
+	// Instances keep the provisioning-time /status/error model. SnapStart environments are
+	// also classified on-demand here (LocalStack sets AWS_LAMBDA_INITIALIZATION_TYPE=on-demand
+	// for them and initializes them lazily at the first invoke, not at version publish), so the
+	// fold-into-invoke model applies to them too.
+	// TODO: set AWS_LAMBDA_INITIALIZATION_TYPE=snap-start on the LocalStack side for env-var
+	// parity with AWS once SnapStart environments get their own initialization type.
+	onDemand := GetenvWithDefault("AWS_LAMBDA_INITIALIZATION_TYPE", "on-demand") == "on-demand"
+
+	// Events API rides rapidcore's lifecycle events to emit the synthetic START/INIT_REPORT
+	// log lines at the AWS-faithful points and to record the init outcome — see events.go.
+	lsEventsAPI := NewLocalStackEventsAPI(logCollector, onDemand)
 
 	// build sandbox
 	sandbox := rapidcore.
@@ -286,69 +298,81 @@ func main() {
 	}
 
 	log.Debugln("Awaiting initialization of runtime init.")
-	initResp, timedOut, err := interopServer.delegate.AwaitInitializedWithTimeout(
-		time.Duration(initPhaseTimeoutSeconds) * time.Second,
-	)
-	switch {
-	case timedOut && !interopServer.onDemand:
-		// Provisioned concurrency / Managed Instances: AWS fails the provisioning operation
-		// when the extended init window is exceeded — there is no suppressed-init retry at
-		// invoke time. Report the failure and exit instead of signaling ready.
-		// TODO: validate the exact provisioning-failure errorType/message against AWS
-		// (e.g. the Managed Instances API model's FUNCTION_ERROR_INIT_TIMEOUT).
-		log.Errorf("Extended init phase timed out after %ds. Exiting.", initPhaseTimeoutSeconds)
-		interopServer.SendInitError(
-			fatalerror.SandboxTimeout,
-			fmt.Errorf("Init phase timed out after %d seconds", initPhaseTimeoutSeconds),
-		)
-		return
-	case timedOut:
+	// Await init completion on a goroutine so the await can be bounded by the init-phase
+	// timeout without consuming rapidcore's init outcome on the timeout path.
+	initDone := make(chan error, 1)
+	go func() { initDone <- interopServer.delegate.AwaitInitialized() }()
+
+	initTimer := time.NewTimer(time.Duration(initPhaseTimeoutSeconds) * time.Second)
+	defer initTimer.Stop()
+	var initErr error
+	select {
+	case initErr = <-initDone:
+	case <-initTimer.C:
+		if !onDemand {
+			// Provisioned concurrency / Managed Instances: AWS fails the provisioning
+			// operation when the extended init window is exceeded — there is no
+			// suppressed-init retry at invoke time. Report the failure and exit.
+			// TODO: validate the exact provisioning-failure errorType/message against AWS
+			// (e.g. the Managed Instances API model's FUNCTION_ERROR_INIT_TIMEOUT).
+			log.Errorf("Extended init phase timed out after %ds. Exiting.", initPhaseTimeoutSeconds)
+			interopServer.ReportInitFailure(
+				fatalerror.SandboxTimeout,
+				fmt.Sprintf("Init phase timed out after %d seconds", initPhaseTimeoutSeconds),
+			)
+			return
+		}
 		// On-demand: AWS limits the init phase to 10s. When exceeded, init is retried at the
-		// time of the first invocation under the function timeout ("suppressed init"). We
-		// report the init timeout, reset the in-progress init so rapidcore re-runs a fresh
-		// Init phase when the first invoke arrives, and only then signal ready.
-		// The reset must complete BEFORE signaling ready: its cleanup (Clear/Release in
-		// rapidcore.Server.Reset) releases the current reservation, so running it concurrently
-		// with the first invoke's Reserve() would cancel that invoke's reservation mid-flight.
-		// The reset cannot block on the unconsumed init failure: awaitInitCompletion acks rapid
-		// before the (still pending) initFailures channel send, which the invoke path's
-		// Reserve()/awaitInitialized() later consumes to trigger the suppressed init.
+		// time of the first invocation under the function timeout ("suppressed init"). Mark
+		// the timeout (the aborted init's INIT_REPORT then renders as Status: timeout, see
+		// events.go), reset the in-progress init so rapidcore re-runs a fresh Init phase when
+		// the first invoke arrives, and only then signal ready.
 		log.Debugln("Init phase timed out; deferring to suppressed init on first invocation.")
-		interopServer.ReportInitTimeout()
+		lsEventsAPI.SetInitPhaseTimedOut()
 		if _, resetErr := interopServer.delegate.Reset("initTimeout", initResetTimeoutMs); resetErr != nil {
 			// A non-nil error only carries the aborted init's fatal error type; the reset
 			// itself has completed and the suppressed-init retry stays valid.
 			log.Debugf("Reset after init timeout returned: %s", resetErr)
 		}
-		// Consume the reset-interrupted init's failure notification: if the first invoke's
-		// awaitInitialized() consumed it instead, rapidcore would cache a generic placeholder
-		// error (Sandbox.Failure with an empty payload) that masks the real error when the
-		// suppressed init re-run fails (e.g. a runtime crash without /init/error).
-		interopServer.delegate.DrainInitFailure()
-	case interopServer.onDemand && errors.Is(err, rapidcore.ErrInitDoneFailed):
+		// Wait for the awaiting goroutine to consume the aborted init's failure notification
+		// (the reset is committed to delivering one) and discard its ErrInitResetReceived:
+		//   - the first invoke's awaitInitialized() then observes the closed channel instead,
+		//     so rapidcore does not cache a generic placeholder error (Sandbox.Failure with an
+		//     empty payload) that would mask the real error if the suppressed init re-run
+		//     fails (e.g. a runtime crash without /init/error);
+		//   - it also orders the goroutine's cleanup (Server.Release) before the ready signal,
+		//     so it cannot cancel the first invoke's fresh reservation.
+		<-initDone
+	}
+
+	switch {
+	case initErr == nil:
+		// Init succeeded, or timed out above (suppressed-init retry at first invocation).
+	case onDemand && errors.Is(initErr, rapidcore.ErrInitDoneFailed):
 		// On-demand: AWS folds a failed cold-start init into the first invocation (suppressed
 		// init). Signal ready and keep the process alive so LocalStack dispatches the first
 		// invoke, which surfaces the cached init error (or a runtime-exit error) together with
-		// the full INIT_REPORT/START/END/REPORT log envelope. SendInitErrorResponse has already
-		// cached the structured error (without reporting via /status/error for on-demand).
-		// Record the failure type detected by rapidcore so runtimes that crashed WITHOUT
-		// calling /init/error still get the error envelope (no-op when /init/error already
-		// recorded the runtime-reported type).
-		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
-		interopServer.RecordInitError(initResp.InitErrorType)
-		// Emit the failed cold-start init's INIT_REPORT(phase=init) line. AWS performs a
-		// suppressed double init, so the first invocation later emits a second
+		// the full INIT_REPORT/START/END/REPORT log envelope. The events API has already
+		// rendered the failed init's INIT_REPORT(phase=init) line and recorded its error type;
+		// AWS performs a suppressed double init, so the first invocation later emits a second
 		// INIT_REPORT(phase=invoke) line for the retried (folded-in) init.
-		interopServer.ReportInitPhaseError()
-	case err != nil:
-		// PC/SnapStart/MI, or an init-phase reset: report the failure now and exit. When the
-		// runtime reported its own error via /init/error, SendInitErrorResponse already
-		// forwarded it and SendInitError is a no-op. When the runtime crashed/exited without
-		// reporting, this is the only callback that notifies LocalStack.
-		log.Errorln("Runtime init failed to initialize: " + err.Error() + ". Exiting.")
-		if !errors.Is(err, rapidcore.ErrInitResetReceived) {
-			interopServer.SendInitError(initResp.InitErrorType, initResp.InitErrorMessage)
+		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
+	case errors.Is(initErr, rapidcore.ErrInitResetReceived):
+		// An external reset (e.g. hot reloading) aborted the init phase: exit without
+		// reporting an init error; the container exit surfaces the failure.
+		log.Errorln("Runtime init was reset before completing. Exiting.")
+		return
+	default:
+		// Provisioned concurrency / Managed Instances: report the failure now and exit,
+		// failing the provisioning operation. ReportInitFailure forwards the runtime's own
+		// /init/error payload when reported; otherwise (crash, sys.exit, invalid entrypoint)
+		// it synthesizes one from the error type recorded by the events API.
+		log.Errorln("Runtime init failed to initialize: " + initErr.Error() + ". Exiting.")
+		errType := fatalerror.ErrorType(lsEventsAPI.InitErrorType())
+		if errType == "" {
+			errType = fatalerror.RuntimeExit
 		}
+		interopServer.ReportInitFailure(errType, "Runtime exited during initialization")
 		return
 	}
 
