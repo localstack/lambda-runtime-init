@@ -238,7 +238,7 @@ func main() {
 	runDaemon(d) // async
 
 	defaultInterop := sandbox.DefaultInteropServer()
-	interopServer := NewCustomInteropServer(lsOpts, lsAdapter, defaultInterop, logCollector)
+	interopServer := NewCustomInteropServer(lsOpts, lsAdapter, defaultInterop, logCollector, lsEventsAPI)
 	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)
@@ -323,7 +323,11 @@ func main() {
 		// invoke, which surfaces the cached init error (or a runtime-exit error) together with
 		// the full INIT_REPORT/START/END/REPORT log envelope. SendInitErrorResponse has already
 		// cached the structured error (without reporting via /status/error for on-demand).
+		// Record the failure type detected by rapidcore so runtimes that crashed WITHOUT
+		// calling /init/error still get the error envelope (no-op when /init/error already
+		// recorded the runtime-reported type).
 		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
+		interopServer.RecordInitError(initResp.InitErrorType)
 	case err != nil:
 		// PC/SnapStart/MI, or an init-phase reset: report the failure now and exit. When the
 		// runtime reported its own error via /init/error, SendInitErrorResponse already
