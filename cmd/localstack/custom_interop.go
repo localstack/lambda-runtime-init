@@ -428,6 +428,25 @@ func (c *CustomInteropServer) ReportInitTimeout() {
 	fprintInitReport(c.logCollector, millisSince(c.initStart), "init", "timeout", "")
 }
 
+// ReportInitPhaseError emits the AWS-style INIT_REPORT(phase=init, status=error) line for an
+// on-demand cold-start init that failed (e.g. a runtime crash or exit during module load).
+// AWS performs a suppressed double init: the failed cold-start init reports Phase: init here,
+// and the retried init folded into the first invocation reports Phase: invoke (see the invoke
+// handler). It is a no-op when no init error was recorded. The duration is rapid's measurement
+// of the Init phase when available, falling back to wall-clock for inits that died before
+// emitting their INIT_REPORT lifecycle event.
+func (c *CustomInteropServer) ReportInitPhaseError() {
+	errType, _ := c.initErrorType.Load().(string)
+	if errType == "" {
+		return
+	}
+	initTimeMS, ok := c.eventsAPI.InitDurationMS()
+	if !ok {
+		initTimeMS = millisSince(c.initStart)
+	}
+	fprintInitReport(c.logCollector, initTimeMS, "init", "error", errType)
+}
+
 // millisSince returns the wall-clock milliseconds elapsed since start.
 func millisSince(start time.Time) float64 {
 	return float64(time.Since(start).Nanoseconds()) / float64(time.Millisecond)

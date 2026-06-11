@@ -336,6 +336,10 @@ func main() {
 		// recorded the runtime-reported type).
 		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
 		interopServer.RecordInitError(initResp.InitErrorType)
+		// Emit the failed cold-start init's INIT_REPORT(phase=init) line. AWS performs a
+		// suppressed double init, so the first invocation later emits a second
+		// INIT_REPORT(phase=invoke) line for the retried (folded-in) init.
+		interopServer.ReportInitPhaseError()
 	case err != nil:
 		// PC/SnapStart/MI, or an init-phase reset: report the failure now and exit. When the
 		// runtime reported its own error via /init/error, SendInitErrorResponse already
