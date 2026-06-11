@@ -51,6 +51,21 @@ func (s *Server) interpretInitFailure(initFailure interop.InitFailure, awaitingI
 	return resp, nil
 }
 
+// DrainInitFailure consumes (without any side effects) the init-failure notification left
+// behind after resetting a timed-out init. The reset aborts the in-progress init, leaving
+// awaitInitCompletion parked on the unbuffered initFailures channel with a ResetReceived
+// failure; if the first invoke's Reserve()/awaitInitialized() consumed that instead, it would
+// cache a generic placeholder error (Sandbox.Failure with an empty payload, see the
+// ErrInitResetReceived handling in Invoke) that later masks the real outcome of the suppressed
+// init re-run. Draining it here lets awaitInitialized() observe the closed channel and treat
+// the init outcome as pending, so the suppressed init's own result is authoritative.
+// The receive cannot block indefinitely: once the reset has completed, awaitInitCompletion is
+// committed to either sending the failure or closing the channel (init succeeded just before
+// the reset took effect).
+func (s *Server) DrainInitFailure() {
+	<-s.getInitFailuresChan()
+}
+
 // AwaitInitializedWithTimeout behaves like the upstream AwaitInitialized but (1) returns the
 // structured init error on failure and (2) returns early if init does not complete within the
 // timeout. On timeout it returns timedOut=true WITHOUT consuming the init-failures channel and

@@ -317,6 +317,11 @@ func main() {
 			// itself has completed and the suppressed-init retry stays valid.
 			log.Debugf("Reset after init timeout returned: %s", resetErr)
 		}
+		// Consume the reset-interrupted init's failure notification: if the first invoke's
+		// awaitInitialized() consumed it instead, rapidcore would cache a generic placeholder
+		// error (Sandbox.Failure with an empty payload) that masks the real error when the
+		// suppressed init re-run fails (e.g. a runtime crash without /init/error).
+		interopServer.delegate.DrainInitFailure()
 	case interopServer.onDemand && errors.Is(err, rapidcore.ErrInitDoneFailed):
 		// On-demand: AWS folds a failed cold-start init into the first invocation (suppressed
 		// init). Signal ready and keep the process alive so LocalStack dispatches the first
