@@ -5,12 +5,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore"
 	log "github.com/sirupsen/logrus"
@@ -285,20 +287,36 @@ func main() {
 		time.Duration(initPhaseTimeoutSeconds) * time.Second,
 	)
 	switch {
+	case timedOut && !interopServer.onDemand:
+		// Provisioned concurrency / Managed Instances: AWS fails the provisioning operation
+		// when the extended init window is exceeded — there is no suppressed-init retry at
+		// invoke time. Report the failure and exit instead of signaling ready.
+		// TODO: validate the exact provisioning-failure errorType/message against AWS
+		// (e.g. the Managed Instances API model's FUNCTION_ERROR_INIT_TIMEOUT).
+		log.Errorf("Extended init phase timed out after %ds. Exiting.", initPhaseTimeoutSeconds)
+		interopServer.SendInitError(
+			fatalerror.SandboxTimeout,
+			fmt.Errorf("Init phase timed out after %d seconds", initPhaseTimeoutSeconds),
+		)
+		return
 	case timedOut:
-		// AWS limits the init phase to 10s. When exceeded, init is retried at the time of the
-		// first invocation under the function timeout ("suppressed init"). We report the init
-		// timeout and signal ready so LocalStack dispatches the first invoke, then reset the
-		// in-progress init so rapidcore re-runs a fresh Init phase when that invoke arrives.
-		// The reset failure is intentionally left unconsumed here so the invoke path's
-		// Reserve()/awaitInitialized() picks it up and triggers the suppressed init.
+		// On-demand: AWS limits the init phase to 10s. When exceeded, init is retried at the
+		// time of the first invocation under the function timeout ("suppressed init"). We
+		// report the init timeout, reset the in-progress init so rapidcore re-runs a fresh
+		// Init phase when the first invoke arrives, and only then signal ready.
+		// The reset must complete BEFORE signaling ready: its cleanup (Clear/Release in
+		// rapidcore.Server.Reset) releases the current reservation, so running it concurrently
+		// with the first invoke's Reserve() would cancel that invoke's reservation mid-flight.
+		// The reset cannot block on the unconsumed init failure: awaitInitCompletion acks rapid
+		// before the (still pending) initFailures channel send, which the invoke path's
+		// Reserve()/awaitInitialized() later consumes to trigger the suppressed init.
 		log.Debugln("Init phase timed out; deferring to suppressed init on first invocation.")
 		interopServer.ReportInitTimeout()
-		go func() {
-			if _, resetErr := interopServer.delegate.Reset("initTimeout", initResetTimeoutMs); resetErr != nil {
-				log.Debugf("Reset after init timeout returned: %s", resetErr)
-			}
-		}()
+		if _, resetErr := interopServer.delegate.Reset("initTimeout", initResetTimeoutMs); resetErr != nil {
+			// A non-nil error only carries the aborted init's fatal error type; the reset
+			// itself has completed and the suppressed-init retry stays valid.
+			log.Debugf("Reset after init timeout returned: %s", resetErr)
+		}
 	case interopServer.onDemand && errors.Is(err, rapidcore.ErrInitDoneFailed):
 		// On-demand: AWS folds a failed cold-start init into the first invocation (suppressed
 		// init). Signal ready and keep the process alive so LocalStack dispatches the first
