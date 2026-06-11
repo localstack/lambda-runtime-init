@@ -100,15 +100,17 @@ func PrintEndReports(invokeId string, initDuration string, status string, memory
 	_, _ = fmt.Fprintln(w, "END RequestId: "+invokeId)
 	// We set the Max Memory Used and Memory Size to be the same (whatever it is set to) since there is
 	// not a clean way to get this information from rapidcore
+	// initDuration and status are pre-formatted fragments: pass them as %s arguments, not as
+	// part of the format string — status may embed a runtime-supplied error type, and a stray
+	// formatting verb in it would corrupt the REPORT line.
 	_, _ = fmt.Fprintf(w,
 		"REPORT RequestId: %s\t"+
 			"Duration: %.2f ms\t"+
 			"Billed Duration: %.f ms\t"+
 			"Memory Size: %s MB\t"+
 			"Max Memory Used: %s MB\t"+
-			initDuration+
-			status+"\n",
-		invokeId, invokeDuration, math.Ceil(invokeDuration), memorySize, memorySize)
+			"%s%s\n",
+		invokeId, invokeDuration, math.Ceil(invokeDuration), memorySize, memorySize, initDuration, status)
 }
 
 type Sandbox interface {

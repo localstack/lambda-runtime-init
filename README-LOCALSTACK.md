@@ -45,4 +45,6 @@ Document all custom changes with the following comment prefix `# LOCALSTACK CHAN
 
 * Everything in `cmd/localstack`, `cmd/ls-mock`, and `.github`
 * `Makefile` for debugging and building with Docker
+* `internal/lsapi` LocalStack-only package with the request/response types of the LocalStack <-> RIE HTTP API
 * 2023-10-17: `lambda/rapidcore/server.go` pass request metadata into .Reserve(invoke.ID, invoke.TraceID, invoke.LambdaSegmentID)
+* 2026-06-11: `lambda/rapidcore/server_localstack.go` new LocalStack-only file with additions to the rapidcore Server (timeout-aware init await, init-failure drain, structured init-failure interpretation)

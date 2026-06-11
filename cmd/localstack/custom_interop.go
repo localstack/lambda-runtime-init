@@ -22,7 +22,6 @@ import (
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -49,7 +48,8 @@ type CustomInteropServer struct {
 	initTimedOut atomic.Bool
 	// initErrorForwarded is set once the runtime's own /init/error has been forwarded to
 	// LocalStack via SendInitErrorResponse, so the crash-path fallback (SendInitError) does
-	// not send a duplicate error status for the same failed initialization.
+	// not send a duplicate error status for the same failed initialization. Unlike
+	// initErrorType below it is never cleared: it only guards the one-shot init-phase report.
 	initErrorForwarded atomic.Bool
 	// initErrorType holds rapidcore's scrubbed fatal error type (e.g. Runtime.Unknown) when init
 	// failed, used to render the INIT_REPORT(phase=invoke) and REPORT Status/Error Type lines for
@@ -83,14 +83,22 @@ const (
 	Error LocalStackStatus = "error"
 )
 
-func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
-	statusUrl := fmt.Sprintf("%s/status/%s/%s", l.UpstreamEndpoint, l.RuntimeId, status)
-	resp, err := http.Post(statusUrl, "application/json", bytes.NewReader(payload))
+// post sends a JSON payload to the given LocalStack endpoint path and fails on non-2xx
+// responses (e.g. LocalStack rejects a duplicate /status/error with 400).
+func (l *LocalStackAdapter) post(path string, payload []byte) error {
+	resp, err := http.Post(l.UpstreamEndpoint+path, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s returned status %d", path, resp.StatusCode)
+	}
 	return nil
+}
+
+func (l *LocalStackAdapter) SendStatus(status LocalStackStatus, payload []byte) error {
+	return l.post(fmt.Sprintf("/status/%s/%s", l.RuntimeId, status), payload)
 }
 
 // SendLogs posts the captured invocation logs to LocalStack.
@@ -99,12 +107,7 @@ func (l *LocalStackAdapter) SendLogs(invokeId string, logs lsapi.LogResponse) er
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(l.UpstreamEndpoint+"/invocations/"+invokeId+"/logs", "application/json", bytes.NewReader(serialized))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return nil
+	return l.post("/invocations/"+invokeId+"/logs", serialized)
 }
 
 // SendResult posts the invocation result body to LocalStack.
@@ -124,12 +127,7 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	} else {
 		log.Infoln("Sending to /response")
 	}
-	resp, err := http.Post(l.UpstreamEndpoint+endpoint, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return nil
+	return l.post(endpoint, body)
 }
 
 func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate interop.Server, logCollector *LogCollector, eventsAPI *LocalStackEventsAPI) (server *CustomInteropServer) {
@@ -184,11 +182,9 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				if initErrType != "" {
 					initTimeMS, ok := server.eventsAPI.InitDurationMS()
 					if !ok {
-						initTimeMS = float64(time.Since(server.initStart).Nanoseconds()) / float64(time.Millisecond)
+						initTimeMS = millisSince(server.initStart)
 					}
-					_, _ = fmt.Fprintf(logCollector,
-						"INIT_REPORT Init Duration: %.2f ms\tPhase: invoke\tStatus: error\tError Type: %s\n",
-						initTimeMS, initErrType)
+					fprintInitReport(logCollector, initTimeMS, "invoke", "error", initErrType)
 				}
 
 				invokeStart := time.Now()
@@ -302,7 +298,7 @@ func (c *CustomInteropServer) SendErrorResponse(invokeID string, resp *interop.E
 // LocalStack and then propagates it to the delegate. It marks initErrorForwarded so the
 // crash-path fallback in main.go (SendInitError) does not send a duplicate error status for
 // the same failed initialization.
-func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) error {
+func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeResponse) (err error) {
 	log.Traceln("SendInitErrorResponse called")
 	// Mark synchronously, before sending: this runs in the init flow before
 	// AwaitInitializedWithDetails unblocks in main.go, so the fallback observes the flag.
@@ -311,8 +307,10 @@ func (c *CustomInteropServer) SendInitErrorResponse(resp *interop.ErrorInvokeRes
 	// INIT_REPORT(phase=invoke) and REPORT Status/Error Type lines (on-demand).
 	c.initErrorType.Store(string(resp.FunctionError.Type))
 
-	// Always cache the structured error in the delegate so the first invoke can surface it.
-	defer c.delegate.SendInitErrorResponse(resp)
+	// Always cache the structured error in the delegate so the first invoke can surface it, and
+	// return its error: the /runtime/init/error handler renders an interop error to the runtime
+	// based on it (e.g. ErrResponseSent during a suppressed init).
+	defer func() { err = c.delegate.SendInitErrorResponse(resp) }()
 
 	// On-demand folds the failed init into the first invocation, which carries the error and
 	// logs; reporting it here via /status/error too would race the invoke and fail the env
@@ -374,15 +372,11 @@ func (c *CustomInteropServer) SendInitError(errType fatalerror.ErrorType, errMsg
 
 	// Match AWS's fault message format "RequestId: <id> Error: <msg>". No invocation is active
 	// during the init phase (LocalStack only dispatches an invoke after the runtime reports
-	// ready), so synthesize a request ID, preferring the current invoke ID if one exists.
-	requestID := c.delegate.GetCurrentInvokeID()
-	if requestID == "" {
-		requestID = uuid.NewString()
-	}
-
+	// ready), so the request id is blank — matching the /init/error path, which forwards AWS's
+	// blank init-phase requestId (see SendInitErrorResponse).
 	payload, err := json.Marshal(lsapi.ErrorResponse{
 		ErrorType:    string(errType),
-		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", requestID, message),
+		ErrorMessage: fmt.Sprintf("RequestId: %s Error: %s", c.delegate.GetCurrentInvokeID(), message),
 	})
 	if err != nil {
 		log.WithError(err).Error("Failed to marshal init error response")
@@ -431,9 +425,23 @@ func (c *CustomInteropServer) Init(i *interop.Init, invokeTimeoutMs int64) error
 // invocation (under the function timeout), and that invocation's REPORT omits Init Duration.
 func (c *CustomInteropServer) ReportInitTimeout() {
 	c.initTimedOut.Store(true)
-	initTimeMS := float64(time.Since(c.initStart).Nanoseconds()) / float64(time.Millisecond)
-	_, _ = fmt.Fprintf(c.logCollector,
-		"INIT_REPORT Init Duration: %.2f ms\tPhase: init\tStatus: timeout\n", initTimeMS)
+	fprintInitReport(c.logCollector, millisSince(c.initStart), "init", "timeout", "")
+}
+
+// millisSince returns the wall-clock milliseconds elapsed since start.
+func millisSince(start time.Time) float64 {
+	return float64(time.Since(start).Nanoseconds()) / float64(time.Millisecond)
+}
+
+// fprintInitReport emits an AWS-style INIT_REPORT log line, e.g.
+// "INIT_REPORT Init Duration: 9999.27 ms\tPhase: init\tStatus: timeout" or
+// "INIT_REPORT Init Duration: 0.91 ms\tPhase: invoke\tStatus: error\tError Type: Runtime.ExitError".
+func fprintInitReport(w io.Writer, durationMS float64, phase string, status string, errorType string) {
+	_, _ = fmt.Fprintf(w, "INIT_REPORT Init Duration: %.2f ms\tPhase: %s\tStatus: %s", durationMS, phase, status)
+	if errorType != "" {
+		_, _ = fmt.Fprintf(w, "\tError Type: %s", errorType)
+	}
+	_, _ = fmt.Fprintln(w)
 }
 
 func (c *CustomInteropServer) Invoke(responseWriter http.ResponseWriter, invoke *interop.Invoke) error {

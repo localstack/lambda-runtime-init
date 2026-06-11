@@ -63,14 +63,14 @@ func InitLsOpts() *LsOpts {
 		RuntimeId:       GetEnvOrDie("LOCALSTACK_RUNTIME_ID"),
 		AccountId:       GetenvWithDefault("LOCALSTACK_FUNCTION_ACCOUNT_ID", "000000000000"),
 		// optional with default
-		InteropPort:      GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
-		InitTracingPort:  GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
-		User:             GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
-		InitLogLevel:     GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
-		EdgePort:         GetenvWithDefault("EDGE_PORT", "4566"),
-		MaxPayloadSize:   GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
-		InitPhaseTimeout: GetenvWithDefault("LOCALSTACK_INIT_PHASE_TIMEOUT", strconv.Itoa(defaultInitPhaseTimeoutSeconds)),
+		InteropPort:     GetenvWithDefault("LOCALSTACK_INTEROP_PORT", "9563"),
+		InitTracingPort: GetenvWithDefault("LOCALSTACK_RUNTIME_TRACING_PORT", "9564"),
+		User:            GetenvWithDefault("LOCALSTACK_USER", "sbx_user1051"),
+		InitLogLevel:    GetenvWithDefault("LOCALSTACK_INIT_LOG_LEVEL", "warn"),
+		EdgePort:        GetenvWithDefault("EDGE_PORT", "4566"),
+		MaxPayloadSize:  GetenvWithDefault("LOCALSTACK_MAX_PAYLOAD_SIZE", "6291556"),
 		// optional or empty
+		InitPhaseTimeout:    os.Getenv("LOCALSTACK_INIT_PHASE_TIMEOUT"),
 		CodeArchives:        os.Getenv("LOCALSTACK_CODE_ARCHIVES"),
 		HotReloadingPaths:   strings.Split(GetenvWithDefault("LOCALSTACK_HOT_RELOADING_PATHS", ""), ","),
 		FileWatcherStrategy: os.Getenv("LOCALSTACK_FILE_WATCHER_STRATEGY"),
@@ -276,10 +276,13 @@ func main() {
 	InitHandler(sandbox.LambdaInvokeAPI(), GetEnvOrDie("AWS_LAMBDA_FUNCTION_VERSION"), int64(invokeTimeoutSeconds), bootstrap, lsOpts.AccountId) // TODO: replace this with a custom init
 
 	initPhaseTimeoutSeconds := defaultInitPhaseTimeoutSeconds
-	if parsed, perr := strconv.Atoi(lsOpts.InitPhaseTimeout); perr == nil {
-		initPhaseTimeoutSeconds = parsed
-	} else {
-		log.Warnln("Invalid LOCALSTACK_INIT_PHASE_TIMEOUT, using default:", perr)
+	if lsOpts.InitPhaseTimeout != "" {
+		if parsed, perr := strconv.Atoi(lsOpts.InitPhaseTimeout); perr == nil && parsed > 0 {
+			initPhaseTimeoutSeconds = parsed
+		} else {
+			log.Warnf("Invalid LOCALSTACK_INIT_PHASE_TIMEOUT %q (must be a positive integer); using default %ds",
+				lsOpts.InitPhaseTimeout, defaultInitPhaseTimeoutSeconds)
+		}
 	}
 
 	log.Debugln("Awaiting initialization of runtime init.")

@@ -1,5 +1,8 @@
 package rapidcore
 
+// LOCALSTACK CHANGES 2026-06-11: new LocalStack-only file with additions to the rapidcore
+// Server (timeout-aware init await, init-failure drain, structured init-failure interpretation)
+
 // This file contains LocalStack-specific additions to the rapidcore Server. It is kept
 // separate from server.go (which is vendored upstream from
 // aws-lambda-runtime-interface-emulator) so that upstream stays byte-identical and rebases
