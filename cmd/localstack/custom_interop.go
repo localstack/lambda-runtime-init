@@ -133,12 +133,9 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				// after an inline suppressed init's own logs) — see events.go.
 
 				// First invocation into a successfully initialized on-demand environment: REPORT
-				// carries the Init phase duration as measured by rapid (take-once; empty on warm
+				// carries the Init phase duration as measured by rapid (take-once; absent on warm
 				// starts, failed/timed-out inits, and non-on-demand environments).
-				initDuration := ""
-				if initTimeMS, ok := server.eventsAPI.TakeColdStartInitDuration(); ok {
-					initDuration = fmt.Sprintf("Init Duration: %.2f ms\t", initTimeMS)
-				}
+				initDurationMS, hasInitDuration := server.eventsAPI.TakeColdStartInitDuration()
 
 				invokeStart := time.Now()
 				err = server.Invoke(invokeResp, &interop.Invoke{
@@ -162,12 +159,13 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
 				status := ""
+				errorType := ""
 				if err != nil {
 					switch {
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")
 						isErr = true
-						status = "Status: timeout"
+						status = "timeout"
 						errorResponse := lsapi.ErrorResponse{
 							ErrorType: "Sandbox.Timedout",
 							ErrorMessage: fmt.Sprintf(
@@ -191,7 +189,8 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 						// scrubbed fatal error type (e.g. Runtime.Unknown).
 						if errType := server.eventsAPI.InitErrorType(); errType != "" {
 							isErr = true
-							status = "Status: error\tError Type: " + errType
+							status = "error"
+							errorType = errType
 						}
 					default:
 						log.Fatalln(err)
@@ -207,7 +206,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 				}
 				timeoutDuration := time.Duration(timeout) * time.Second
 				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
-				PrintEndReports(invokeR.InvokeId, initDuration, status, memorySize, invokeStart, timeoutDuration, logCollector)
+				PrintEndReports(invokeR.InvokeId, initDurationMS, hasInitDuration, status, errorType, memorySize, invokeStart, timeoutDuration, logCollector)
 
 				if err2 := server.localStackAdapter.SendLogs(invokeR.InvokeId, logCollector.getLogs()); err2 != nil {
 					log.Error("failed to send logs to LocalStack: ", err2)
