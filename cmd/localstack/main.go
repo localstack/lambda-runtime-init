@@ -195,12 +195,6 @@ func main() {
 	localStackLogsEgressApi := NewLocalStackLogsEgressAPI(logCollector)
 	tracer := NewLocalStackTracer()
 
-	// Create LocalStack adapter upfront so it can be shared with the interop server
-	lsAdapter := &LocalStackAdapter{
-		UpstreamEndpoint: lsOpts.RuntimeEndpoint,
-		RuntimeId:        lsOpts.RuntimeId,
-	}
-
 	// onDemand is true for on-demand functions, where AWS folds a failed cold-start init into
 	// the first invocation (suppressed init). For these we do NOT report init failures via
 	// /status/error; instead we signal ready and let the first invoke surface the error with
@@ -250,7 +244,7 @@ func main() {
 	runDaemon(d) // async
 
 	defaultInterop := sandbox.DefaultInteropServer()
-	interopServer := NewCustomInteropServer(lsOpts, lsAdapter, defaultInterop, logCollector, lsEventsAPI)
+	interopServer := NewCustomInteropServer(lsOpts, defaultInterop, logCollector, lsEventsAPI)
 	sandbox.SetInteropServer(interopServer)
 	if len(handler) > 0 {
 		sandbox.SetHandler(handler)

@@ -99,13 +99,16 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return l.post(endpoint, body)
 }
 
-func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate interop.Server, logCollector *LogCollector, eventsAPI *LocalStackEventsAPI) (server *CustomInteropServer) {
+func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector, eventsAPI *LocalStackEventsAPI) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
-		delegate:          delegate.(*rapidcore.Server),
-		port:              lsOpts.InteropPort,
-		upstreamEndpoint:  lsOpts.RuntimeEndpoint,
-		localStackAdapter: adapter,
-		eventsAPI:         eventsAPI,
+		delegate:         delegate.(*rapidcore.Server),
+		port:             lsOpts.InteropPort,
+		upstreamEndpoint: lsOpts.RuntimeEndpoint,
+		localStackAdapter: &LocalStackAdapter{
+			UpstreamEndpoint: lsOpts.RuntimeEndpoint,
+			RuntimeId:        lsOpts.RuntimeId,
+		},
+		eventsAPI: eventsAPI,
 	}
 
 	// TODO: extract this

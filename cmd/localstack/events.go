@@ -36,9 +36,9 @@ type LocalStackEventsAPI struct {
 	// never calls — i.e. unbounded memory growth in warm environments.
 	lambdatelemetry.NoOpEventsAPI
 	logCollector *LogCollector
-	// onDemand mirrors CustomInteropServer.onDemand: only on-demand functions report the
-	// cold-start init duration in their first invocation's REPORT line (AWS omits it for
-	// provisioned-concurrency and Managed Instances invokes).
+	// onDemand is true for on-demand functions (see the onDemand classification in main.go):
+	// only those report the cold-start init duration in their first invocation's REPORT line
+	// (AWS omits it for provisioned-concurrency and Managed Instances invokes).
 	onDemand bool
 
 	mu sync.Mutex
