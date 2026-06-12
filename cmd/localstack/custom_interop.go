@@ -287,7 +287,11 @@ func (c *CustomInteropServer) ReportInitFailure(errType fatalerror.ErrorType, me
 // adaptInitErrorPayload injects the requestId into the runtime's structured /init/error
 // payload, preserving all other fields exactly as the runtime emitted them — in particular an
 // empty but present "stackTrace": [] (e.g. Runtime.HandlerNotFound), which a typed struct with
-// omitempty would drop on re-marshal. AWS includes a (blank) requestId in init error payloads.
+// omitempty would drop on re-marshal.
+//
+// AWS includes a (blank) "requestId" in runtime-reported init error payloads but NOT in
+// platform-synthesized ones (e.g. Runtime.ExitError) — see the lsapi.ErrorResponse doc for the
+// AWS-snapshot evidence. The two ReportInitFailure paths intentionally differ in this regard.
 // Returns nil if the payload cannot be adapted (it is then forwarded unmodified).
 func adaptInitErrorPayload(payload []byte, requestID string) []byte {
 	var fields map[string]any
