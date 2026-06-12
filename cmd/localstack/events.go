@@ -6,7 +6,6 @@ import (
 
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/fatalerror"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
-	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/rapidcore/standalone/telemetry"
 	lambdatelemetry "github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/telemetry"
 )
 
@@ -31,7 +30,11 @@ import (
 // doRuntimeDomainInit and so runs first on the deferred LIFO unwind. All three fire even when
 // the init is aborted by a reset or dies before the runtime starts.
 type LocalStackEventsAPI struct {
-	*telemetry.StandaloneEventsAPI
+	// NoOpEventsAPI satisfies the rest of interop.EventsAPI without retaining anything.
+	// Do not embed StandaloneEventsAPI here: it appends every platform event to an
+	// in-memory event log that is only drained via FetchTailLogs, which this deployment
+	// never calls — i.e. unbounded memory growth in warm environments.
+	lambdatelemetry.NoOpEventsAPI
 	logCollector *LogCollector
 	// onDemand mirrors CustomInteropServer.onDemand: only on-demand functions report the
 	// cold-start init duration in their first invocation's REPORT line (AWS omits it for
@@ -65,9 +68,8 @@ type LocalStackEventsAPI struct {
 
 func NewLocalStackEventsAPI(logCollector *LogCollector, onDemand bool) *LocalStackEventsAPI {
 	return &LocalStackEventsAPI{
-		StandaloneEventsAPI: new(telemetry.StandaloneEventsAPI),
-		logCollector:        logCollector,
-		onDemand:            onDemand,
+		logCollector: logCollector,
+		onDemand:     onDemand,
 	}
 }
 
@@ -75,7 +77,7 @@ func (e *LocalStackEventsAPI) SendInitStart(data interop.InitStartData) error {
 	e.mu.Lock()
 	e.lastInitStatus, e.lastInitErrorType = "", ""
 	e.mu.Unlock()
-	return e.StandaloneEventsAPI.SendInitStart(data)
+	return nil
 }
 
 func (e *LocalStackEventsAPI) SendInitRuntimeDone(data interop.InitRuntimeDoneData) error {
@@ -86,7 +88,7 @@ func (e *LocalStackEventsAPI) SendInitRuntimeDone(data interop.InitRuntimeDoneDa
 		e.lastInitErrorType = *data.ErrorType
 	}
 	e.mu.Unlock()
-	return e.StandaloneEventsAPI.SendInitRuntimeDone(data)
+	return nil
 }
 
 func (e *LocalStackEventsAPI) SendInitReport(data interop.InitReportData) error {
@@ -122,12 +124,12 @@ func (e *LocalStackEventsAPI) SendInitReport(data interop.InitReportData) error 
 	if line != "" {
 		_, _ = e.logCollector.Write([]byte(line))
 	}
-	return e.StandaloneEventsAPI.SendInitReport(data)
+	return nil
 }
 
 func (e *LocalStackEventsAPI) SendInvokeStart(data interop.InvokeStartData) error {
 	_, _ = fmt.Fprintf(e.logCollector, "START RequestId: %s Version: %s\n", data.RequestID, data.Version)
-	return e.StandaloneEventsAPI.SendInvokeStart(data)
+	return nil
 }
 
 // SetInitPhaseTimedOut marks the in-flight init phase as timed out by the RIE, so the
