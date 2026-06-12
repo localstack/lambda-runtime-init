@@ -48,15 +48,22 @@ func TestEventsAPI_SuccessfulOnDemandInit_NoInitReportLine_DurationTakenOnce(t *
 	assert.Empty(t, e.InitErrorType())
 }
 
-func TestEventsAPI_SuccessfulProvisionedInit_NoDurationRecorded(t *testing.T) {
+func TestEventsAPI_SuccessfulProvisionedInit_RendersBareInitReport(t *testing.T) {
 	logs := NewLogCollector()
 	e := NewLocalStackEventsAPI(logs, false)
 
 	sendInit(t, e, "init", "success", "", 123.45)
 
-	// AWS omits Init Duration from provisioned-concurrency invokes' REPORT lines.
+	// A successful provisioned-concurrency init emits a bare INIT_REPORT: only the duration,
+	// with no Phase/Status/Error Type (those appear for failed or timed-out inits).
+	assert.Equal(t,
+		"INIT_REPORT Init Duration: 123.45 ms\n",
+		logs.getLogs().Logs)
+	// AWS omits Init Duration from provisioned-concurrency invokes' REPORT lines, so the
+	// duration is not buffered for a first-invocation REPORT.
 	_, ok := e.TakeColdStartInitDuration()
 	assert.False(t, ok)
+	assert.Empty(t, e.InitErrorType())
 }
 
 func TestEventsAPI_FailedInit_RendersInitReportAndRecordsErrorType(t *testing.T) {

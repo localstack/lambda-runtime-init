@@ -16,11 +16,13 @@ import (
 //   - START is emitted on SendInvokeStart, which rapid fires after any inline (suppressed)
 //     init and before the runtime handles the invocation — so a re-run init's logs land
 //     before START, matching AWS.
-//   - INIT_REPORT is emitted on SendInitReport for failed or timed-out inits, with rapid's
-//     authoritative duration and phase (init for the eager cold-start init, invoke for a
-//     suppressed init folded into an invocation). AWS logs no INIT_REPORT for successful
-//     inits; a successful on-demand cold-start init instead surfaces as the first
-//     invocation's REPORT "Init Duration" (see TakeColdStartInitDuration).
+//   - INIT_REPORT is emitted on SendInitReport for failed or timed-out inits (carrying a
+//     Status and, for failures, an Error Type) and for successful provisioned-concurrency /
+//     Managed Instances inits (a bare line carrying only the duration and phase). It uses
+//     rapid's authoritative duration and phase (init for the eager cold-start init, invoke for
+//     a suppressed init folded into an invocation). A successful on-demand cold-start init logs
+//     no INIT_REPORT; its duration surfaces as the first invocation's REPORT "Init Duration"
+//     instead (see TakeColdStartInitDuration).
 //   - The scrubbed fatal error type of the most recent failed init (e.g. Runtime.ExitError,
 //     Runtime.Unknown) is recorded for the invoke handler's REPORT Status/Error Type line and
 //     for the init-failure report to LocalStack (see InitErrorType).
@@ -121,6 +123,13 @@ func (e *LocalStackEventsAPI) SendInitReport(data interop.InitReportData) error 
 		// REPORT "Init Duration" instead of an INIT_REPORT line.
 		e.coldStartInitDuration = data.Metrics.DurationMs
 		e.hasColdStartInitDuration = true
+	case data.Phase == lambdatelemetry.InitInsideInitPhase:
+		// Successful provisioned-concurrency / Managed Instances init (non-on-demand). Those
+		// environments initialize ahead of time, so the duration cannot fold into a first
+		// invocation's REPORT (their invokes omit Init Duration); AWS instead emits a bare
+		// INIT_REPORT carrying only the duration — no Phase, Status, or Error Type (those
+		// fields appear only on the failed/timed-out init lines above).
+		line = fmt.Sprintf("INIT_REPORT Init Duration: %.2f ms\n", data.Metrics.DurationMs)
 	}
 	e.mu.Unlock()
 	if line != "" {
