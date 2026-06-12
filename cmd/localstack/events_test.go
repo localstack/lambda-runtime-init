@@ -119,12 +119,13 @@ func TestEventsAPI_TimedOutInit_RendersTimeoutStatusOnce(t *testing.T) {
 		logs.getLogs().Logs)
 }
 
-func TestEventsAPI_RecoveredSuppressedInit_NoLineAndErrorClearable(t *testing.T) {
+func TestEventsAPI_RecoveredSuppressedInit_NoLineAndErrorCleared(t *testing.T) {
 	logs := NewLogCollector()
 	e := NewLocalStackEventsAPI(logs, true)
 
 	// Cold-start init fails ...
 	sendInit(t, e, "init", "error", "Runtime.Unknown", 5.0)
+	assert.Equal(t, "Runtime.Unknown", e.InitErrorType())
 	logs.reset()
 	// ... and the suppressed init re-run at the first invocation recovers.
 	sendInit(t, e, "invoke", "success", "", 6.0)
@@ -135,11 +136,23 @@ func TestEventsAPI_RecoveredSuppressedInit_NoLineAndErrorClearable(t *testing.T)
 	_, ok := e.TakeColdStartInitDuration()
 	assert.False(t, ok)
 
-	// The sticky failure record survives until the invoke handler observes a successful
-	// invocation and clears it.
-	assert.Equal(t, "Runtime.Unknown", e.InitErrorType())
-	e.ClearInitError()
+	// The failure record is per init attempt: the successful re-run resets it, so the
+	// recovered invocation's REPORT is not tainted by the original failure — even if the
+	// invocation itself later dies fatally.
 	assert.Empty(t, e.InitErrorType())
+}
+
+func TestEventsAPI_RepeatedFailingSuppressedInit_ReRecordsEachAttempt(t *testing.T) {
+	logs := NewLogCollector()
+	e := NewLocalStackEventsAPI(logs, true)
+
+	// Cold-start init fails, then every invocation re-runs the suppressed init,
+	// which fails again — each attempt re-records its own error type.
+	sendInit(t, e, "init", "error", "Runtime.Unknown", 5.0)
+	sendInit(t, e, "invoke", "error", "Runtime.ExitError", 2.0)
+	assert.Equal(t, "Runtime.ExitError", e.InitErrorType())
+	sendInit(t, e, "invoke", "error", "Runtime.Unknown", 2.1)
+	assert.Equal(t, "Runtime.Unknown", e.InitErrorType())
 }
 
 func TestEventsAPI_InvokeStart_EmitsStartLine(t *testing.T) {

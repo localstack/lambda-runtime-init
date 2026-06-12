@@ -159,12 +159,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, adapter *LocalStackAdapter, delegate
 				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
 				isErr := false
 				status := ""
-				if err == nil {
-					// The invocation succeeded: if an earlier init failure was folded into it
-					// and the suppressed init re-run recovered, the result stands on its own —
-					// AWS reports it as successful — so clear the recorded init failure.
-					server.eventsAPI.ClearInitError()
-				} else {
+				if err != nil {
 					switch {
 					case errors.Is(err, rapidcore.ErrInvokeTimeout):
 						log.Debugf("Got invoke timeout")

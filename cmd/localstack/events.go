@@ -49,11 +49,13 @@ type LocalStackEventsAPI struct {
 	// starting the runtime process, so treat empty as an error.
 	lastInitStatus    string
 	lastInitErrorType string
-	// initErrorType is the scrubbed fatal error type of the most recent failed init. Unlike
-	// lastInitErrorType it is sticky across init attempts (each failing invocation re-runs the
-	// init as a suppressed init and AWS re-emits the failure envelope) and is cleared by the
-	// invoke handler once an invocation succeeds, so a recovered environment is not tainted by
-	// the original failure.
+	// initErrorType is the scrubbed fatal error type of the most recent failed init attempt,
+	// reset on SendInitStart. No cross-attempt stickiness is needed: every invocation into a
+	// failed-init environment starts a fresh suppressed Init phase (rapidcore shuts the runtime
+	// down after an init failure so the next FastInvoke re-inits — see Server.Invoke in
+	// rapidcore/server.go), so each failing invocation re-records the failure via its own
+	// SendInitReport, and a successful re-run leaves it empty — a recovered environment is not
+	// tainted by the original failure.
 	initErrorType string
 	// initTimedOut is set by main.go before it resets a timed-out init phase, so the aborted
 	// init's INIT_REPORT renders as AWS's "Status: timeout" (without an error type) instead of
@@ -75,7 +77,7 @@ func NewLocalStackEventsAPI(logCollector *LogCollector, onDemand bool) *LocalSta
 
 func (e *LocalStackEventsAPI) SendInitStart(data interop.InitStartData) error {
 	e.mu.Lock()
-	e.lastInitStatus, e.lastInitErrorType = "", ""
+	e.lastInitStatus, e.lastInitErrorType, e.initErrorType = "", "", ""
 	e.mu.Unlock()
 	return nil
 }
@@ -156,18 +158,9 @@ func (e *LocalStackEventsAPI) TakeColdStartInitDuration() (durationMS float64, o
 }
 
 // InitErrorType returns the scrubbed fatal error type (e.g. Runtime.ExitError) of the most
-// recent failed init, or "" if the latest init succeeded or none was recorded.
+// recent failed init attempt, or "" if the latest init attempt succeeded or none was recorded.
 func (e *LocalStackEventsAPI) InitErrorType() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.initErrorType
-}
-
-// ClearInitError resets the recorded init failure once an invocation succeeded: the
-// suppressed init re-run recovered, so later invocations must not be tainted by the
-// original failure.
-func (e *LocalStackEventsAPI) ClearInitError() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.initErrorType = ""
 }
