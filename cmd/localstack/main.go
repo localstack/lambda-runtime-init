@@ -266,6 +266,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	hotReloadEnabled := isHotReloadingEnabled(lsOpts.HotReloadingPaths)
 	go RunHotReloadingListener(interopServer, lsOpts.HotReloadingPaths, fileWatcherContext, lsOpts.FileWatcherStrategy)
 
 	log.Debugf("Awaiting initialization of runtime api at %s.", runtimeAPIAddress)
@@ -352,10 +353,21 @@ func main() {
 		// INIT_REPORT(phase=invoke) line for the retried (folded-in) init.
 		log.Debugln("Init failed; deferring to first invocation (on-demand suppressed init).")
 	case errors.Is(initErr, rapidcore.ErrInitResetReceived):
-		// An external reset (e.g. hot reloading) aborted the init phase: exit without
-		// reporting an init error; the container exit surfaces the failure.
-		log.Errorln("Runtime init was reset before completing. Exiting.")
-		return
+		if !hotReloadEnabled {
+			// A reset aborted the init phase (e.g. sandbox teardown or a standalone
+			// /test/reset): exit without reporting an init error; the container exit
+			// surfaces the failure.
+			log.Errorln("Runtime init was reset before completing. Exiting.")
+			return
+		}
+		// Hot reloading aborted the in-progress init. Reset("HotReload") has already
+		// cleared rapidcore state (s.Clear + runtimeNotStarted) for a fresh suppressed
+		// init at the first invocation. Wait for that reset to finish so its Server.Release
+		// is ordered before the ready signal below (otherwise a late Release could cancel
+		// the first invoke's reservation), then fall through to signal ready and keep the
+		// container alive so the next invoke re-inits with the reloaded code.
+		log.Infoln("Runtime init was reset by hot reloading; deferring to suppressed init on first invocation.")
+		<-interopServer.resetDone
 	default:
 		// Provisioned concurrency / Managed Instances: report the failure now and exit,
 		// failing the provisioning operation. ReportInitFailure forwards the runtime's own

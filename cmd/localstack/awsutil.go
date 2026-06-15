@@ -156,8 +156,15 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 }
 
+// isHotReloadingEnabled reports whether hot reloading is configured. When
+// LOCALSTACK_HOT_RELOADING_PATHS is unset, strings.Split yields a single empty
+// element, which means disabled.
+func isHotReloadingEnabled(targetPaths []string) bool {
+	return !(len(targetPaths) == 1 && targetPaths[0] == "")
+}
+
 func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
-	if len(targetPaths) == 1 && targetPaths[0] == "" {
+	if !isHotReloadingEnabled(targetPaths) {
 		log.Debugln("Hot reloading disabled.")
 		return
 	}

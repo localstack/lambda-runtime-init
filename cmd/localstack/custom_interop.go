@@ -38,6 +38,11 @@ type CustomInteropServer struct {
 	// LocalStack instead of a synthesized one. Written from the runtime API handler flow and
 	// read from the main flow after init failed, hence atomic.
 	initErrorPayload atomic.Value
+	// resetDone signals (non-blocking, buffered-1) that a Reset has fully completed
+	// — i.e. delegate.Reset returned after the underlying Server.Release. The main flow
+	// waits on this when a hot-reload reset aborts the init phase, so the ready signal is
+	// ordered after the reset's Release and cannot cancel the first invoke's reservation.
+	resetDone chan struct{}
 }
 
 type LocalStackAdapter struct {
@@ -109,6 +114,7 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 			RuntimeId:        lsOpts.RuntimeId,
 		},
 		eventsAPI: eventsAPI,
+		resetDone: make(chan struct{}, 1),
 	}
 
 	// TODO: extract this
@@ -339,7 +345,15 @@ func (c *CustomInteropServer) Reserve(id string, traceID, lambdaSegmentID string
 
 func (c *CustomInteropServer) Reset(reason string, timeoutMs int64) (*statejson.ResetDescription, error) {
 	log.Traceln("Reset called")
-	return c.delegate.Reset(reason, timeoutMs)
+	resp, err := c.delegate.Reset(reason, timeoutMs)
+	// delegate.Reset has returned, so the reset (including Server.Release) is complete.
+	// Signal a waiter (the main flow on a hot-reload reset during init) without blocking
+	// normal post-init reloads, which have no reader.
+	select {
+	case c.resetDone <- struct{}{}:
+	default:
+	}
+	return resp, err
 }
 
 func (c *CustomInteropServer) AwaitRelease() (*statejson.ReleaseResponse, error) {
