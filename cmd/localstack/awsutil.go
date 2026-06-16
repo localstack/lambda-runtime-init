@@ -92,7 +92,12 @@ func getBootstrap(args []string) (interop.Bootstrap, string) {
 	return NewSimpleBootstrap(bootstrapLookupCmd, currentWorkingDir), handler
 }
 
-func PrintEndReports(invokeId string, initDuration string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
+// PrintEndReports emits the END and REPORT lines that close an invocation's log envelope.
+// initDurationMS is rendered when hasInitDuration is set (the successful on-demand cold-start
+// init duration reported via the first invocation, see TakeColdStartInitDuration). status is
+// "" for a plain successful invocation, or AWS's "timeout" / "error"; errorType (a scrubbed
+// fatal error type, e.g. Runtime.ExitError) is rendered only alongside status "error".
+func PrintEndReports(invokeId string, initDurationMS float64, hasInitDuration bool, status string, errorType string, memorySize string, invokeStart time.Time, timeoutDuration time.Duration, w io.Writer) {
 	// Calculate invoke duration
 	invokeDuration := math.Min(float64(time.Now().Sub(invokeStart).Nanoseconds()),
 		float64(timeoutDuration.Nanoseconds())) / float64(time.Millisecond)
@@ -100,14 +105,25 @@ func PrintEndReports(invokeId string, initDuration string, memorySize string, in
 	_, _ = fmt.Fprintln(w, "END RequestId: "+invokeId)
 	// We set the Max Memory Used and Memory Size to be the same (whatever it is set to) since there is
 	// not a clean way to get this information from rapidcore
-	_, _ = fmt.Fprintf(w,
+	report := fmt.Sprintf(
 		"REPORT RequestId: %s\t"+
-			initDuration+
 			"Duration: %.2f ms\t"+
 			"Billed Duration: %.f ms\t"+
 			"Memory Size: %s MB\t"+
-			"Max Memory Used: %s MB\t\n",
+			"Max Memory Used: %s MB\t",
 		invokeId, invokeDuration, math.Ceil(invokeDuration), memorySize, memorySize)
+	if hasInitDuration {
+		report += fmt.Sprintf("Init Duration: %.2f ms\t", initDurationMS)
+	}
+	if status != "" {
+		// Concatenated, not formatted: errorType is runtime-supplied, and a stray formatting
+		// verb in it would corrupt the REPORT line.
+		report += "Status: " + status
+		if errorType != "" {
+			report += "\tError Type: " + errorType
+		}
+	}
+	_, _ = fmt.Fprintln(w, report)
 }
 
 type Sandbox interface {
@@ -140,8 +156,15 @@ func resetListener(changeChannel <-chan bool, server *CustomInteropServer) {
 
 }
 
+// isHotReloadingEnabled reports whether hot reloading is configured. When
+// LOCALSTACK_HOT_RELOADING_PATHS is unset, strings.Split yields a single empty
+// element, which means disabled.
+func isHotReloadingEnabled(targetPaths []string) bool {
+	return !(len(targetPaths) == 1 && targetPaths[0] == "")
+}
+
 func RunHotReloadingListener(server *CustomInteropServer, targetPaths []string, ctx context.Context, fileWatcherStrategy string) {
-	if len(targetPaths) == 1 && targetPaths[0] == "" {
+	if !isHotReloadingEnabled(targetPaths) {
 		log.Debugln("Hot reloading disabled.")
 		return
 	}
