@@ -1,0 +1,70 @@
+# Weekly auto-release: patch-bumps and publishes if there are new commits on localstack.
+name: Weekly Release
+
+on:
+  schedule:
+    # Fridays 06:00 UTC: ahead of lambda-images' Mon 13:00 UTC rebuild so Renovate can bump downstream pins first.
+    - cron: '0 6 * * 5'
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Compute the next version but do not release."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.ver.outputs.should_release }}
+      next: ${{ steps.ver.outputs.next }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: localstack
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+          # Latest published release (same source as downstream Renovate); sort -V for highest version, not newest.
+          latest=$(gh release list --exclude-pre-releases --exclude-drafts \
+                     --json tagName -q '.[].tagName' \
+                   | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          if [ -z "$latest" ]; then
+            echo "::error::No published vX.Y.Z release found to bump from." && exit 1
+          fi
+          count=$(git rev-list "${latest}..HEAD" --count)
+          ver=${latest#v}
+          IFS=. read -r major minor patch <<< "$ver"
+          next="v${major}.${minor}.$((patch + 1))"
+          should_release=true
+          if [ "$count" = "0" ]; then
+            should_release=false
+            echo "No new commits since $latest; nothing to release."
+          fi
+          if [ "${{ inputs.dryRun }}" = "true" ]; then
+            should_release=false
+            echo "dryRun requested; not releasing."
+          fi
+          {
+            echo "next=$next"
+            echo "should_release=$should_release"
+          } >> "$GITHUB_OUTPUT"
+          echo "Latest release: $latest | new commits since: $count | next: $next | release: $should_release"
+
+  release:
+    needs: version
+    if: needs.version.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    # Reuse build.yml's test -> build -> release path with the computed version.
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.next }}
