@@ -39,6 +39,51 @@ Follow these steps to integrate upstream changes from the official AWS [lambda-r
 
 Example PR that integrates upstream changes: https://github.com/localstack/lambda-runtime-init/pull/24
 
+## Releases
+
+Releases are cut from the `localstack` branch (not `main`/`develop`, which mirror upstream AWS).
+The resulting binaries are consumed by localstack-pro via `LAMBDA_INIT_RELEASE_VERSION=<tag>` and
+by lambda-images.
+
+### Regular release
+
+Regular releases are **automated**: pushing a version tag on `localstack` triggers the
+[`build.yml`](./.github/workflows/build.yml) workflow, which runs the tests, builds the binaries
+(`make compile-lambda-linux-all`), and publishes a GitHub release with auto-generated release notes
+and the `bin/*` binaries attached. Versioning follows `vX.Y.Z` (e.g. `v0.2.0`), continuing from the
+previous release (e.g. [`v0.1.47`](https://github.com/localstack/lambda-runtime-init/releases/tag/v0.1.47)).
+
+1. Create a **lightweight** tag for the new version, on the commit you want to release. Match the
+   prior convention
+   ```bash
+   git tag v0.2.0
+   ```
+2. Push the tag to trigger the release build:
+   ```bash
+   git push origin v0.2.0
+   ```
+   `build.yml` matches the `v*.*` tag pattern and publishes the release automatically. A tag ending
+   in `-pre` is published as a pre-release.
+
+> The `.github/workflows/release.yml` ("Release") workflow is **legacy** and is not used for
+> LocalStack releases — it is a manual `workflow_dispatch` that checks out `main` (the upstream
+> mirror) rather than `localstack`, so it would not include the LocalStack customizations.
+
+### RC (release candidate) pre-release
+
+RC pre-releases let an **unmerged** PR be tested against localstack-pro CI without cutting a real
+release. They are fully automated via `.github/workflows/rc-release.yml`:
+
+1. Add the label `trigger:rc-release` to the PR.
+2. The workflow builds the binaries from the PR head, publishes a throwaway GitHub **pre-release**
+   tagged `v0.0.0-rc.pr<N>-<sha>`, and comments the tag + download URLs back on the PR.
+3. Test the PR by setting `LAMBDA_INIT_RELEASE_VERSION=v0.0.0-rc.pr<N>-<sha>` in localstack-pro CI.
+4. The pre-release and its tag are **deleted automatically** when the PR is closed.
+
+Unlike a regular release, an RC is built from an **unmerged PR head** and published as a throwaway
+pre-release that is auto-deleted on close — localstack-pro CI is the real test. Both flows run the
+unit tests (`make tests-with-docker`); neither runs integ-tests.
+
 ## Custom LocalStack Changes
 
 Document all custom changes with the following comment prefix `# LOCALSTACK CHANGES yyyy-mm-dd:`
