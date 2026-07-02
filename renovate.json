@@ -5,6 +5,7 @@
   ],
   "postUpdateOptions": ["gomodTidy"],
   "platformAutomerge": true,
+  "automergeStrategy": "squash",
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
   "packageRules": [
