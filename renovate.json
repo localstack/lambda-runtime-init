@@ -5,6 +5,8 @@
   ],
   "postUpdateOptions": ["gomodTidy"],
   "platformAutomerge": true,
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "matchManagers": ["gomod"],
@@ -41,6 +43,7 @@
   "vulnerabilityAlerts": {
     "groupName": null,
     "automerge": true,
-    "labels": ["security"]
+    "labels": ["security"],
+    "minimumReleaseAge": "0"
   }
 }
