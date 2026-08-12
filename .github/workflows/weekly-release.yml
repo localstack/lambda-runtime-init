@@ -3,7 +3,8 @@ name: Weekly Release
 
 on:
   schedule:
-    # Fridays 06:00 UTC: ahead of lambda-images' Mon 13:00 UTC rebuild so Renovate can bump downstream pins first.
+    # Fridays 06:00 UTC. The release is a pre-release until localstack-pro validates and promotes it,
+    # which is what gates the downstream lambda-images bump.
     - cron: '0 6 * * 5'
   workflow_dispatch:
     inputs:
