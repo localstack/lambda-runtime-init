@@ -14,6 +14,11 @@ on:
         type: string
         required: false
         default: ""
+      prerelease:
+        description: "Publish as a pre-release. Promoted to a full release once localstack-pro validates it."
+        type: boolean
+        required: false
+        default: false
 
 jobs:
 
@@ -65,4 +70,4 @@ jobs:
         tag_name: ${{ inputs.version || github.ref_name }}
         files: bin/*
         generate_release_notes: true
-        prerelease: ${{ endsWith(github.ref, '-pre') || endsWith(inputs.version, '-pre') }}
+        prerelease: ${{ inputs.prerelease || endsWith(github.ref, '-pre') || endsWith(inputs.version, '-pre') }}

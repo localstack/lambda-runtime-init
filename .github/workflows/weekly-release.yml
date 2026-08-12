@@ -33,8 +33,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --tags --force
-          # Latest published release (same source as downstream Renovate); sort -V for highest version, not newest.
-          latest=$(gh release list --exclude-pre-releases --exclude-drafts \
+          # Highest released version, including pre-releases still awaiting promotion, so a pending
+          # promotion cannot make us recompute a version whose tag already exists. The grep keeps
+          # RC tags (v0.0.0-rc.*) out; sort -V picks the highest version, not the newest.
+          latest=$(gh release list --exclude-drafts \
                      --json tagName -q '.[].tagName' \
                    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
           if [ -z "$latest" ]; then
@@ -64,7 +66,9 @@ jobs:
     if: needs.version.outputs.should_release == 'true'
     permissions:
       contents: write
-    # Reuse build.yml's test -> build -> release path with the computed version.
+    # Reuse build.yml's test -> build -> release path with the computed version. Published as a
+    # pre-release; localstack-pro promotes it to a full release once its CI validates the version.
     uses: ./.github/workflows/build.yml
     with:
       version: ${{ needs.version.outputs.next }}
+      prerelease: true
