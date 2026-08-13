@@ -24,6 +24,12 @@
       "automerge": true
     },
     {
+      "description": "The gomod manager skips '// indirect' deps by default, so CVE fixes in transitive modules were never proposed (golang.org/x/net sat two minor versions behind for months). Enabling them here only sets 'enabled'; the grouping and automerge above still apply, and the major rule below still wins for major bumps.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": true
+    },
+    {
       "matchManagers": ["gomod"],
       "excludePackageNames": ["go"],
       "matchUpdateTypes": ["major"],
