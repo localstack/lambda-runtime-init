@@ -1,0 +1,97 @@
+# Weekly auto-release: patch-bumps and publishes if there are new commits on localstack.
+name: Weekly Release
+
+on:
+  schedule:
+    # Fridays 06:00 UTC. The release is a pre-release until localstack-pro validates and promotes it,
+    # which is what gates the downstream lambda-images bump.
+    - cron: '0 6 * * 5'
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Compute the next version but do not release."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.ver.outputs.should_release }}
+      next: ${{ steps.ver.outputs.next }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: localstack
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+          # Highest released version, including pre-releases still awaiting promotion, so a pending
+          # promotion cannot make us recompute a version whose tag already exists. The grep keeps
+          # RC tags (v0.0.0-rc.*) out; sort -V picks the highest version, not the newest.
+          latest=$(gh release list --exclude-drafts \
+                     --json tagName -q '.[].tagName' \
+                   | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+          if [ -z "$latest" ]; then
+            echo "::error::No published vX.Y.Z release found to bump from." && exit 1
+          fi
+          count=$(git rev-list "${latest}..HEAD" --count)
+          ver=${latest#v}
+          IFS=. read -r major minor patch <<< "$ver"
+          next="v${major}.${minor}.$((patch + 1))"
+          should_release=true
+          if [ "$count" = "0" ]; then
+            should_release=false
+            echo "No new commits since $latest; nothing to release."
+          fi
+          if [ "${{ inputs.dryRun }}" = "true" ]; then
+            should_release=false
+            echo "dryRun requested; not releasing."
+          fi
+          {
+            echo "next=$next"
+            echo "should_release=$should_release"
+          } >> "$GITHUB_OUTPUT"
+          echo "Latest release: $latest | new commits since: $count | next: $next | release: $should_release"
+
+  release:
+    needs: version
+    if: needs.version.outputs.should_release == 'true'
+    permissions:
+      contents: write
+    # Reuse build.yml's test -> build -> release path with the computed version. Published as a
+    # pre-release; localstack-pro promotes it to a full release once its CI validates the version.
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.next }}
+      prerelease: true
+
+  notify:
+    name: Report a broken weekly release
+    if: always() && (needs.version.result == 'failure' || needs.release.result == 'failure')
+    runs-on: ubuntu-latest
+    needs:
+      - version
+      - release
+    steps:
+      - name: "Send Message"
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        env:
+          MESSAGE: "_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:"
+        with:
+          webhook: ${{ secrets.COSY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "${{ env.MESSAGE }}"

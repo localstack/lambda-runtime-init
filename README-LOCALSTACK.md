@@ -69,6 +69,25 @@ previous release (e.g. [`v0.1.47`](https://github.com/localstack/lambda-runtime-
 > LocalStack releases — it is a manual `workflow_dispatch` that checks out `main` (the upstream
 > mirror) rather than `localstack`, so it would not include the LocalStack customizations.
 
+### Weekly auto-release
+
+[`weekly-release.yml`](./.github/workflows/weekly-release.yml) runs every Friday at 06:00 UTC. If
+`localstack` has new commits since the highest existing release, it patch-bumps the version and calls
+`build.yml` to run the tests, build the binaries, push the tag, and publish the release. Together with
+Renovate automerge, this is what carries dependency and CVE fixes downstream without manual work.
+
+The release is published as a **pre-release**, and only reaches consumers once it has been validated:
+
+1. `weekly-release.yml` publishes `vX.Y.Z`, marked as a pre-release.
+2. localstack-pro opens a PR bumping `LAMBDA_RUNTIME_DEFAULT_VERSION` to that version; its CI is the
+   quality gate.
+3. On merge, localstack-pro flips the same release to a full release through the GitHub API — no new
+   tag and no rebuild, so the binaries that were validated are the binaries that ship.
+4. lambda-images ignores pre-releases, so Renovate only opens a bump PR there after the promotion.
+
+Run it manually via the **Weekly Release** workflow (`workflow_dispatch`); `dryRun` reports the next
+version without releasing. A failed run posts to Slack.
+
 ### RC (release candidate) pre-release
 
 RC pre-releases let an **unmerged** PR be tested against localstack-pro CI without cutting a real
