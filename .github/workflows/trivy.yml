@@ -1,0 +1,33 @@
+name: Trivy Dependency Scan
+
+# Quality gate for dependency bumps (incl. Renovate automerge): fail the PR if a
+# changed dependency pulls in a known HIGH/CRITICAL vulnerability, so we never ship
+# an update with a known issue.
+
+on:
+  push:
+    branches: [localstack]
+  pull_request:
+    branches: [localstack]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-fs:
+    name: Scan go.mod for known CVEs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          # Skip CVEs with no fix available, otherwise an unfixable upstream CVE would
+          # permanently block every merge until a patch exists.
+          ignore-unfixed: true
+          exit-code: "1"

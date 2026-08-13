@@ -4,24 +4,47 @@
     "config:recommended"
   ],
   "postUpdateOptions": ["gomodTidy"],
+  "platformAutomerge": true,
+  "automergeStrategy": "squash",
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang"],
       "rangeStrategy": "bump",
-      "groupName": "Go toolchain"
+      "groupName": "Go toolchain",
+      "automerge": true
     },
     {
       "matchManagers": ["gomod"],
       "excludePackageNames": ["go"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "Go dependencies (non-major)"
+      "groupName": "Go dependencies (non-major)",
+      "automerge": true
     },
     {
       "matchManagers": ["gomod"],
       "excludePackageNames": ["go"],
       "matchUpdateTypes": ["major"],
-      "enabled": false
+      "enabled": false,
+      "automerge": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     }
-  ]
+  ],
+  "vulnerabilityAlerts": {
+    "groupName": null,
+    "automerge": true,
+    "labels": ["security"],
+    "minimumReleaseAge": "0"
+  }
 }
