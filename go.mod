@@ -3,7 +3,7 @@ module github.com/aws/aws-lambda-runtime-interface-emulator
 go 1.27.0
 
 require (
-	github.com/aws/aws-lambda-go v1.54.0
+	github.com/aws/aws-lambda-go v1.55.0
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/aws/aws-xray-daemon v0.0.0-20250212175715-5defe1b8d61b
 	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
