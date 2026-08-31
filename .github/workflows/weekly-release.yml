@@ -82,10 +82,6 @@ jobs:
       - version
       - release
     steps:
-      # Check the webhook before handing it to the action. An unset or blank secret otherwise
-      # fails with "Missing input! Either a method or webhook is required to take action.",
-      # which reads like a workflow syntax bug rather than a missing secret -- that is how the
-      # Aug 28 alert was lost.
       - name: Verify the Slack webhook is configured
         env:
           WEBHOOK: ${{ secrets.COSY_WEBHOOK_URL }}
@@ -99,19 +95,11 @@ jobs:
       - name: "Send Message"
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         env:
-          # Single-quoted so \n stays a two-character escape. In a double-quoted YAML scalar it
-          # becomes a real newline, which lands unindented inside the payload below and breaks
-          # parsing under the stricter js-yaml v5 rules that slack-github-action v4 ships.
           MESSAGE: '_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:'
         with:
           webhook: ${{ secrets.COSY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          # Default is false, which swallows Slack-side delivery errors and reports the step as
-          # green. For the alert that tells us releases are broken, a silent failure is the one
-          # outcome we cannot afford.
           errors: true
-          # JSON rather than YAML: an interpolated message cannot break the document structure,
-          # and \n inside a JSON string is exactly the newline Slack mrkdwn wants.
           payload: |
             {
               "blocks": [
