@@ -71,3 +71,28 @@ jobs:
         files: bin/*
         generate_release_notes: true
         prerelease: ${{ inputs.prerelease || endsWith(github.ref, '-pre') || endsWith(inputs.version, '-pre') }}
+
+  # Single aggregate check for the branch ruleset to require.
+  #
+  # `build` needs `test`, so a failing `test` leaves `build` reporting "skipped" —
+  # which GitHub counts as a passing required status check. That is how six
+  # Renovate PRs automerged onto a red `localstack` between Aug 22 and Aug 30.
+  #
+  # This job depends on every other job and treats anything other than "success"
+  # as a failure, so a skip can no longer masquerade as a pass. `if: always()`
+  # is required: without it the job would itself be skipped when an upstream job
+  # fails, and a required check that never reports blocks the PR as pending.
+  # Add new jobs to `needs` as they are introduced.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Verify upstream jobs succeeded
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        echo "$RESULTS"
+        echo "$RESULTS" | jq -e 'to_entries | map(select(.value.result != "success")) | length == 0' > /dev/null \
+          || { echo "::error::One or more upstream jobs did not succeed"; exit 1; }
