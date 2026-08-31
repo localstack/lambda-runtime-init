@@ -99,7 +99,10 @@ jobs:
       - name: "Send Message"
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         env:
-          MESSAGE: "_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:"
+          # Single-quoted so \n stays a two-character escape. In a double-quoted YAML scalar it
+          # becomes a real newline, which lands unindented inside the payload below and breaks
+          # parsing under the stricter js-yaml v5 rules that slack-github-action v4 ships.
+          MESSAGE: '_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:'
         with:
           webhook: ${{ secrets.COSY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
@@ -107,9 +110,14 @@ jobs:
           # green. For the alert that tells us releases are broken, a silent failure is the one
           # outcome we cannot afford.
           errors: true
+          # JSON rather than YAML: an interpolated message cannot break the document structure,
+          # and \n inside a JSON string is exactly the newline Slack mrkdwn wants.
           payload: |
-            blocks:
-              - type: "section"
-                text:
-                  type: "mrkdwn"
-                  text: "${{ env.MESSAGE }}"
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": "${{ env.MESSAGE }}" }
+                }
+              ]
+            }
