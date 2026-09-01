@@ -1,9 +1,12 @@
 # LOCALSTACK CHANGES 2022-03-10: remove linker flags and add gc flags for delve debugger
 # LOCALSTACK CHANGES 2022-03-28: change compile src folder
 # LOCALSTACK CHANGES 2022-11-14: add --rm flag to compile-with-docker
+# LOCALSTACK CHANGES 2026-08-31: disable the jsonv2 GOEXPERIMENT (see GOEXPERIMENT below)
 
 # RELEASE_BUILD_LINKER_FLAGS disables DWARF and symbol table generation to reduce binary size
 #RELEASE_BUILD_LINKER_FLAGS=-s -w
+
+export GOEXPERIMENT := nojsonv2
 
 BINARY_NAME=aws-lambda-rie
 ARCH=x86_64
