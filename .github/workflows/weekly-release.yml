@@ -82,16 +82,30 @@ jobs:
       - version
       - release
     steps:
+      - name: Verify the Slack webhook is configured
+        env:
+          WEBHOOK: ${{ secrets.COSY_WEBHOOK_URL }}
+        run: |
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::error::COSY_WEBHOOK_URL is unset or empty, so no Slack alert can be sent for this broken release. Set it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "Webhook is configured."
+
       - name: "Send Message"
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         env:
-          MESSAGE: "_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:"
+          MESSAGE: '_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:'
         with:
           webhook: ${{ secrets.COSY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
+          errors: true
           payload: |
-            blocks:
-              - type: "section"
-                text:
-                  type: "mrkdwn"
-                  text: "${{ env.MESSAGE }}"
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": "${{ env.MESSAGE }}" }
+                }
+              ]
+            }
