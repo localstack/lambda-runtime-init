@@ -8,16 +8,12 @@ name: Run Integration Tests
 jobs:
   go-tests:
     runs-on: ubuntu-latest
-    environment:
-      name: integ-tests
     steps:
         - uses: actions/checkout@v7
         - name: run go tests
           run: make tests-with-docker
   integ-tests-x86:
     runs-on: ubuntu-latest
-    environment:
-      name: integ-tests
     steps:
         - uses: actions/checkout@v7
         - uses: actions/setup-python@v7
@@ -27,8 +23,6 @@ jobs:
           run: make integ-tests-with-docker-x86-64
   integ-tests-arm64:
     runs-on: ubuntu-latest
-    environment:
-      name: integ-tests
     steps:
         - uses: actions/checkout@v7
         - uses: actions/setup-python@v7
@@ -38,8 +32,6 @@ jobs:
           run: make integ-tests-with-docker-arm64
   integ-tests-old:
     runs-on: ubuntu-latest
-    environment:
-      name: integ-tests
     steps:
         - uses: actions/checkout@v7
         - uses: actions/setup-python@v7
