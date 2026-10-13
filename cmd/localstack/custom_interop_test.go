@@ -44,6 +44,8 @@ func TestInvokeRequestContract(t *testing.T) {
 	assert.Empty(t, req.ClientContext)
 }
 
+// TestInvokeRequestClientContextContract checks that JSON encoding preserves the base64
+// context verbatim and omits an empty context. Decoding belongs to the invocation handler.
 func TestInvokeRequestClientContextContract(t *testing.T) {
 	raw := `{"client-context":"eyJjdXN0b20iOnsiZm9vIjoiYmFyIn19"}`
 	var req lsapi.InvokeRequest
@@ -57,6 +59,8 @@ func TestInvokeRequestClientContextContract(t *testing.T) {
 	assert.NotContains(t, string(encoded), "client-context")
 }
 
+// TestInvokeHandlerForwardsContextPerRequest reuses one handler across successive requests
+// to check decoding, context isolation, and preservation of the remaining invocation fields.
 func TestInvokeHandlerForwardsContextPerRequest(t *testing.T) {
 	dispatched := make(chan *interop.Invoke, 1)
 	handler := newInvokeHandler(func(invoke *interop.Invoke) { dispatched <- invoke })
@@ -67,8 +71,10 @@ func TestInvokeHandlerForwardsContextPerRequest(t *testing.T) {
 	}{
 		{"full", `{"custom":{"foo":"bar"},"client":{"app_title":"test"},"env":{"platform":"test"}}`, true},
 		{"nested", `{"custom":{"nested":[1,true,null],"unicode":"\u00e9"}}`, true},
+		// Neither form of an absent context may inherit the preceding request's value.
 		{"omitted", "", false},
 		{"empty", "", true},
+		// Base64-looking data inside the decoded JSON must remain untouched.
 		{"decoded-once", `"eyJmb28iOiJiYXIifQ=="`, true},
 	}
 	for _, test := range contexts {
@@ -111,6 +117,8 @@ func (failedInvocationBody) Read([]byte) (int, error) {
 	return 0, errors.New("body read failed")
 }
 
+// TestInvokeHandlerRejectsInvalidRequests checks that bad input gets HTTP 400 and unreadable
+// bodies get HTTP 500, with neither case starting a Lambda invocation in the background.
 func TestInvokeHandlerRejectsInvalidRequests(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -139,6 +147,8 @@ func TestInvokeHandlerRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+// TestInvokeHandlerAcknowledgesBeforeCompletion holds the invocation open while checking
+// that /invoke returns 200 OK. Execution results are delivered later through callbacks.
 func TestInvokeHandlerAcknowledgesBeforeCompletion(t *testing.T) {
 	release := make(chan struct{})
 	completed := make(chan struct{})
