@@ -1,12 +1,17 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lambda/interop"
 	"github.com/aws/aws-lambda-runtime-interface-emulator/internal/lsapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +41,127 @@ func TestInvokeRequestContract(t *testing.T) {
 	assert.Equal(t, "arn:aws:lambda:us-east-1:000000000000:function:my-fn", req.InvokedFunctionArn)
 	assert.Equal(t, `{"key":"value"}`, req.Payload)
 	assert.Equal(t, "Root=1-abc;Parent=def;Sampled=1", req.TraceId)
+	assert.Empty(t, req.ClientContext)
+}
+
+func TestInvokeRequestClientContextContract(t *testing.T) {
+	raw := `{"client-context":"eyJjdXN0b20iOnsiZm9vIjoiYmFyIn19"}`
+	var req lsapi.InvokeRequest
+	require.NoError(t, json.Unmarshal([]byte(raw), &req))
+	assert.Equal(t, "eyJjdXN0b20iOnsiZm9vIjoiYmFyIn19", req.ClientContext)
+	encoded, err := json.Marshal(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"client-context":"eyJjdXN0b20iOnsiZm9vIjoiYmFyIn19"`)
+	encoded, err = json.Marshal(lsapi.InvokeRequest{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "client-context")
+}
+
+func TestInvokeHandlerForwardsContextPerRequest(t *testing.T) {
+	dispatched := make(chan *interop.Invoke, 1)
+	handler := newInvokeHandler(func(invoke *interop.Invoke) { dispatched <- invoke })
+	contexts := []struct {
+		name    string
+		context string
+		present bool
+	}{
+		{"full", `{"custom":{"foo":"bar"},"client":{"app_title":"test"},"env":{"platform":"test"}}`, true},
+		{"nested", `{"custom":{"nested":[1,true,null],"unicode":"\u00e9"}}`, true},
+		{"omitted", "", false},
+		{"empty", "", true},
+		{"decoded-once", `"eyJmb28iOiJiYXIifQ=="`, true},
+	}
+	for _, test := range contexts {
+		t.Run(test.name, func(t *testing.T) {
+			wire := map[string]string{
+				"invoke-id":            test.name,
+				"invoked-function-arn": "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+				"payload":              `{"value":"hello"}`,
+				"trace-id":             "Root=1-abc;Parent=def;Sampled=1",
+			}
+			if test.present {
+				wire["client-context"] = base64.StdEncoding.EncodeToString([]byte(test.context))
+			}
+			body, err := json.Marshal(wire)
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/invoke", strings.NewReader(string(body))))
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, "OK", recorder.Body.String())
+			select {
+			case invoke := <-dispatched:
+				assert.Equal(t, test.context, invoke.ClientContext)
+				assert.Equal(t, test.name, invoke.ID)
+				assert.Equal(t, wire["invoked-function-arn"], invoke.InvokedFunctionArn)
+				assert.Equal(t, wire["trace-id"], invoke.TraceID)
+				assert.True(t, invoke.NeedDebugLogs)
+				payload, err := io.ReadAll(invoke.Payload)
+				require.NoError(t, err)
+				assert.Equal(t, wire["payload"], string(payload))
+			case <-time.After(time.Second):
+				t.Fatal("valid invocation was not dispatched")
+			}
+		})
+	}
+}
+
+type failedInvocationBody struct{}
+
+func (failedInvocationBody) Read([]byte) (int, error) {
+	return 0, errors.New("body read failed")
+}
+
+func TestInvokeHandlerRejectsInvalidRequests(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		body   io.Reader
+		status int
+	}{
+		{"malformed-json", strings.NewReader(`{invalid`), http.StatusBadRequest},
+		{"null", strings.NewReader(`null`), http.StatusBadRequest},
+		{"array", strings.NewReader(`[]`), http.StatusBadRequest},
+		{"invalid-base64", strings.NewReader(`{"client-context":"not base64!"}`), http.StatusBadRequest},
+		{"wrong-context-type", strings.NewReader(`{"client-context":42}`), http.StatusBadRequest},
+		{"body-read-failure", failedInvocationBody{}, http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dispatched := make(chan *interop.Invoke, 1)
+			handler := newInvokeHandler(func(invoke *interop.Invoke) { dispatched <- invoke })
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/invoke", test.body))
+			assert.Equal(t, test.status, recorder.Code)
+			select {
+			case <-dispatched:
+				t.Fatal("invalid invocation was dispatched")
+			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	}
+}
+
+func TestInvokeHandlerAcknowledgesBeforeCompletion(t *testing.T) {
+	release := make(chan struct{})
+	completed := make(chan struct{})
+	defer close(release)
+	handler := newInvokeHandler(func(*interop.Invoke) { <-release; close(completed) })
+	returned := make(chan struct{})
+	recorder := httptest.NewRecorder()
+	go func() {
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/invoke", strings.NewReader(`{"invoke-id":"async"}`)))
+		close(returned)
+	}()
+	select {
+	case <-returned:
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, "OK", recorder.Body.String())
+	case <-time.After(time.Second):
+		t.Fatal("handler waited for invocation completion")
+	}
+	select {
+	case <-completed:
+		t.Fatal("invocation completed before release")
+	default:
+	}
 }
 
 // TestLogResponseContract verifies that LogResponse uses the "logs" JSON key expected by

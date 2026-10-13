@@ -6,6 +6,7 @@ type InvokeRequest struct {
 	InvokedFunctionArn string `json:"invoked-function-arn"`
 	Payload            string `json:"payload"`
 	TraceId            string `json:"trace-id"`
+	ClientContext      string `json:"client-context,omitempty"`
 }
 
 // LogResponse is sent by the runtime to report logs for a completed invocation.
