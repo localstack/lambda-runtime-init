@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,6 +105,47 @@ func (l *LocalStackAdapter) SendResult(invokeId string, body []byte, isError boo
 	return l.post(endpoint, body)
 }
 
+func decodeInvokeRequest(body []byte) (*interop.Invoke, error) {
+	var request *lsapi.InvokeRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	if request == nil {
+		return nil, errors.New("invocation request must be an object")
+	}
+	clientContext, err := base64.StdEncoding.DecodeString(request.ClientContext)
+	if err != nil {
+		return nil, err
+	}
+	return &interop.Invoke{
+		ID:                 request.InvokeId,
+		InvokedFunctionArn: request.InvokedFunctionArn,
+		Payload:            strings.NewReader(request.Payload),
+		NeedDebugLogs:      true,
+		TraceID:            request.TraceId,
+		ClientContext:      string(clientContext),
+	}, nil
+}
+
+// newInvokeHandler validates requests before acknowledging and dispatching them asynchronously
+func newInvokeHandler(dispatch func(*interop.Invoke)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read invocation request", http.StatusInternalServerError)
+			return
+		}
+		invoke, err := decodeInvokeRequest(body)
+		if err != nil {
+			http.Error(w, "Invalid invocation request", http.StatusBadRequest)
+			return
+		}
+		go dispatch(invoke)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	}
+}
+
 func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollector *LogCollector, eventsAPI *LocalStackEventsAPI) (server *CustomInteropServer) {
 	server = &CustomInteropServer{
 		delegate:         delegate.(*rapidcore.Server),
@@ -117,114 +159,80 @@ func NewCustomInteropServer(lsOpts *LsOpts, delegate interop.Server, logCollecto
 		resetDone: make(chan struct{}, 1),
 	}
 
-	// TODO: extract this
 	go func() {
 		r := chi.NewRouter()
-		r.Post("/invoke", func(w http.ResponseWriter, r *http.Request) {
-			invokeR := lsapi.InvokeRequest{}
-			bytess, err := io.ReadAll(r.Body)
+		r.Post("/invoke", newInvokeHandler(func(invoke *interop.Invoke) {
+			invokeResp := &standalone.ResponseWriterProxy{}
+			// The synthetic START and INIT_REPORT lines are emitted via LocalStackEventsAPI
+			// from rapid's lifecycle events, so they land at the AWS-faithful points (e.g.
+			// after an inline suppressed init's own logs) — see events.go.
+
+			// First invocation into a successfully initialized on-demand environment: REPORT
+			// carries the Init phase duration as measured by rapid (take-once; absent on warm
+			// starts, failed/timed-out inits, and non-on-demand environments).
+			initDurationMS, hasInitDuration := server.eventsAPI.TakeColdStartInitDuration()
+
+			invokeStart := time.Now()
+			err := server.Invoke(invokeResp, invoke)
+			timeout := int(server.delegate.GetInvokeTimeout().Seconds())
+			isErr := false
+			status := ""
+			errorType := ""
 			if err != nil {
-				log.Error(err)
-			}
-
-			go func() {
-				err = json.Unmarshal(bytess, &invokeR)
-				if err != nil {
-					log.Error(err)
-				}
-
-				invokeResp := &standalone.ResponseWriterProxy{}
-				// The synthetic START and INIT_REPORT lines are emitted via LocalStackEventsAPI
-				// from rapid's lifecycle events, so they land at the AWS-faithful points (e.g.
-				// after an inline suppressed init's own logs) — see events.go.
-
-				// First invocation into a successfully initialized on-demand environment: REPORT
-				// carries the Init phase duration as measured by rapid (take-once; absent on warm
-				// starts, failed/timed-out inits, and non-on-demand environments).
-				initDurationMS, hasInitDuration := server.eventsAPI.TakeColdStartInitDuration()
-
-				invokeStart := time.Now()
-				err = server.Invoke(invokeResp, &interop.Invoke{
-					ID:                 invokeR.InvokeId,
-					InvokedFunctionArn: invokeR.InvokedFunctionArn,
-					Payload:            strings.NewReader(invokeR.Payload), // r.Body,
-					NeedDebugLogs:      true,
-					TraceID:            invokeR.TraceId,
-					// TODO: set correct segment ID from request
-					//LambdaSegmentID:    "LambdaSegmentID", // r.Header.Get("X-Amzn-Segment-Id"),
-					//CognitoIdentityID:     "",
-					//CognitoIdentityPoolID: "",
-					//DeadlineNs:            "",
-					//ClientContext:         "",
-					//ContentType:           "",
-					//ReservationToken:      "",
-					//VersionID:             "",
-					//InvokeReceivedTime:    0,
-					//ResyncState:           interop.Resync{},
-				})
-				timeout := int(server.delegate.GetInvokeTimeout().Seconds())
-				isErr := false
-				status := ""
-				errorType := ""
-				if err != nil {
-					switch {
-					case errors.Is(err, rapidcore.ErrInvokeTimeout):
-						log.Debugf("Got invoke timeout")
-						isErr = true
-						status = "timeout"
-						errorResponse := lsapi.ErrorResponse{
-							ErrorType: "Sandbox.Timedout",
-							ErrorMessage: fmt.Sprintf(
-								"RequestId: %s Error: Task timed out after %d.00 seconds",
-								invokeR.InvokeId,
-								timeout,
-							),
-						}
-						jsonErrorResponse, err := json.Marshal(errorResponse)
-						if err != nil {
-							log.Fatalln("unable to marshall json timeout response")
-						}
-						_, err = invokeResp.Write(jsonErrorResponse)
-						if err != nil {
-							log.Fatalln("unable to write to response")
-						}
-					case errors.Is(err, rapidcore.ErrInvokeDoneFailed):
-						// The error response body was already written by rapid and is sent below.
-						// When an init failure was folded into this invocation (AWS suppressed
-						// init), the REPORT additionally carries the failure status and the
-						// scrubbed fatal error type (e.g. Runtime.Unknown).
-						if errType := server.eventsAPI.InitErrorType(); errType != "" {
-							isErr = true
-							status = "error"
-							errorType = errType
-						}
-					default:
-						log.Fatalln(err)
+				switch {
+				case errors.Is(err, rapidcore.ErrInvokeTimeout):
+					log.Debugf("Got invoke timeout")
+					isErr = true
+					status = "timeout"
+					errorResponse := lsapi.ErrorResponse{
+						ErrorType: "Sandbox.Timedout",
+						ErrorMessage: fmt.Sprintf(
+							"RequestId: %s Error: Task timed out after %d.00 seconds",
+							invoke.ID,
+							timeout,
+						),
 					}
-				}
-				// optional sleep. can be used for debugging purposes
-				if lsOpts.PostInvokeWaitMS != "" {
-					waitMS, err := strconv.Atoi(lsOpts.PostInvokeWaitMS)
+					jsonErrorResponse, err := json.Marshal(errorResponse)
 					if err != nil {
-						log.Fatalln(err)
+						log.Fatalln("unable to marshall json timeout response")
 					}
-					time.Sleep(time.Duration(waitMS) * time.Millisecond)
+					_, err = invokeResp.Write(jsonErrorResponse)
+					if err != nil {
+						log.Fatalln("unable to write to response")
+					}
+				case errors.Is(err, rapidcore.ErrInvokeDoneFailed):
+					// The error response body was already written by rapid and is sent below.
+					// When an init failure was folded into this invocation (AWS suppressed
+					// init), the REPORT additionally carries the failure status and the
+					// scrubbed fatal error type (e.g. Runtime.Unknown).
+					if errType := server.eventsAPI.InitErrorType(); errType != "" {
+						isErr = true
+						status = "error"
+						errorType = errType
+					}
+				default:
+					log.Fatalln(err)
 				}
-				timeoutDuration := time.Duration(timeout) * time.Second
-				memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
-				PrintEndReports(invokeR.InvokeId, initDurationMS, hasInitDuration, status, errorType, memorySize, invokeStart, timeoutDuration, logCollector)
+			}
+			// optional sleep. can be used for debugging purposes
+			if lsOpts.PostInvokeWaitMS != "" {
+				waitMS, err := strconv.Atoi(lsOpts.PostInvokeWaitMS)
+				if err != nil {
+					log.Fatalln(err)
+				}
+				time.Sleep(time.Duration(waitMS) * time.Millisecond)
+			}
+			timeoutDuration := time.Duration(timeout) * time.Second
+			memorySize := GetEnvOrDie("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
+			PrintEndReports(invoke.ID, initDurationMS, hasInitDuration, status, errorType, memorySize, invokeStart, timeoutDuration, logCollector)
 
-				if err2 := server.localStackAdapter.SendLogs(invokeR.InvokeId, logCollector.getLogs()); err2 != nil {
-					log.Error("failed to send logs to LocalStack: ", err2)
-				}
-				if err2 := server.localStackAdapter.SendResult(invokeR.InvokeId, invokeResp.Body, isErr); err2 != nil {
-					log.Error("failed to send result to LocalStack: ", err2)
-				}
-			}()
-
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte("OK"))
-		})
+			if err2 := server.localStackAdapter.SendLogs(invoke.ID, logCollector.getLogs()); err2 != nil {
+				log.Error("failed to send logs to LocalStack: ", err2)
+			}
+			if err2 := server.localStackAdapter.SendResult(invoke.ID, invokeResp.Body, isErr); err2 != nil {
+				log.Error("failed to send result to LocalStack: ", err2)
+			}
+		}))
 		err := http.ListenAndServe(":"+server.port, r)
 		if err != nil {
 			log.Error(err)
