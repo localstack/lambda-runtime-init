@@ -24,7 +24,7 @@ require (
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/stretchr/objx v0.5.3 // indirect
+	github.com/stretchr/objx v0.7.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.61.0 // indirect
