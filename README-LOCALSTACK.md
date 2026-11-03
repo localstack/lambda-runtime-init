@@ -45,30 +45,6 @@ Releases are cut from the `localstack` branch (not `main`/`develop`, which mirro
 The resulting binaries are consumed by localstack-pro via `LAMBDA_INIT_RELEASE_VERSION=<tag>` and
 by lambda-images.
 
-### Regular release
-
-Regular releases are **automated**: pushing a version tag on `localstack` triggers the
-[`build.yml`](./.github/workflows/build.yml) workflow, which runs the tests, builds the binaries
-(`make compile-lambda-linux-all`), and publishes a GitHub release with auto-generated release notes
-and the `bin/*` binaries attached. Versioning follows `vX.Y.Z` (e.g. `v0.2.0`), continuing from the
-previous release (e.g. [`v0.1.47`](https://github.com/localstack/lambda-runtime-init/releases/tag/v0.1.47)).
-
-1. Create a **lightweight** tag for the new version, on the commit you want to release. Match the
-   prior convention
-   ```bash
-   git tag v0.2.0
-   ```
-2. Push the tag to trigger the release build:
-   ```bash
-   git push origin v0.2.0
-   ```
-   `build.yml` matches the `v*.*` tag pattern and publishes the release automatically. A tag ending
-   in `-pre` is published as a pre-release.
-
-> The `.github/workflows/release.yml` ("Release") workflow is **legacy** and is not used for
-> LocalStack releases — it is a manual `workflow_dispatch` that checks out `main` (the upstream
-> mirror) rather than `localstack`, so it would not include the LocalStack customizations.
-
 ### Weekly auto-release
 
 [`weekly-release.yml`](./.github/workflows/weekly-release.yml) runs every Friday at 06:00 UTC. If
@@ -87,6 +63,41 @@ The release is published as a **pre-release**, and only reaches consumers once i
 
 Run it manually via the **Weekly Release** workflow (`workflow_dispatch`); `dryRun` reports the next
 version without releasing. A failed run posts to Slack.
+
+### Manual release
+
+Most releases come from the weekly auto-release above. Cut one by hand only when you need:
+
+- a **minor or major** version bump (the weekly release only bumps the patch version), or
+- an **urgent fix** that can't wait for the next Friday run.
+
+Pushing a version tag on `localstack` triggers [`build.yml`](./.github/workflows/build.yml), which
+runs the tests, builds the binaries (`make compile-lambda-linux-all`), and publishes a GitHub release
+with auto-generated release notes and the `bin/*` binaries attached.
+
+1. Create a tag on the commit you want to release, continuing from the latest release
+   (see [releases](https://github.com/localstack/lambda-runtime-init/releases)):
+   ```bash
+   git tag v0.4.0
+   ```
+2. Push the tag to trigger the release build:
+   ```bash
+   git push origin v0.4.0
+   ```
+
+> ⚠️ A manual release is published as a **full release** right away. It skips the localstack-pro
+> validation that gates weekly releases, so lambda-images picks it up immediately. To keep the gate,
+> mark it as a pre-release once it's published and let localstack-pro promote it:
+> ```bash
+> gh release edit v0.4.0 --prerelease
+> ```
+
+The next weekly run patch-bumps from the highest `vX.Y.Z` release, so after `v0.4.0` it releases
+`v0.4.1`.
+
+> The `.github/workflows/release.yml` ("Release") workflow is **legacy** and is not used for
+> LocalStack releases. It is a manual `workflow_dispatch` that checks out `main` (the upstream
+> mirror) rather than `localstack`, so it would not include the LocalStack customizations.
 
 ### RC (release candidate) pre-release
 
