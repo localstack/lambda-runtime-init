@@ -6,7 +6,7 @@ on:
     tags: v*.*
   pull_request:
     branches: [ localstack ]
-  # Callable by weekly-release.yml; publishes a release when `version` is set.
+  # Callable by daily-release.yml; publishes a release when `version` is set.
   workflow_call:
     inputs:
       version:
