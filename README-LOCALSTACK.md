@@ -45,31 +45,32 @@ Releases are cut from the `localstack` branch (not `main`/`develop`, which mirro
 The resulting binaries are consumed by localstack-pro via `LAMBDA_INIT_RELEASE_VERSION=<tag>` and
 by lambda-images.
 
-### Weekly auto-release
+### Daily auto-release
 
-[`weekly-release.yml`](./.github/workflows/weekly-release.yml) runs every Friday at 06:00 UTC. If
-`localstack` has new commits since the highest existing release, it patch-bumps the version and calls
+[`daily-release.yml`](./.github/workflows/daily-release.yml) runs every day at 06:00 UTC. If
+`localstack` has new commits touching `go.mod`, `go.sum`, `*.go` or the `Makefile` since the highest
+existing release, it patch-bumps the version and calls
 `build.yml` to run the tests, build the binaries, push the tag, and publish the release. Together with
 Renovate automerge, this is what carries dependency and CVE fixes downstream without manual work.
 
 The release is published as a **pre-release**, and only reaches consumers once it has been validated:
 
-1. `weekly-release.yml` publishes `vX.Y.Z`, marked as a pre-release.
+1. `daily-release.yml` publishes `vX.Y.Z`, marked as a pre-release.
 2. localstack-pro opens a PR bumping `LAMBDA_RUNTIME_DEFAULT_VERSION` to that version; its CI is the
    quality gate.
 3. On merge, localstack-pro flips the same release to a full release through the GitHub API — no new
    tag and no rebuild, so the binaries that were validated are the binaries that ship.
 4. lambda-images ignores pre-releases, so Renovate only opens a bump PR there after the promotion.
 
-Run it manually via the **Weekly Release** workflow (`workflow_dispatch`); `dryRun` reports the next
+Run it manually via the **Daily Release** workflow (`workflow_dispatch`); `dryRun` reports the next
 version without releasing. A failed run posts to Slack.
 
 ### Manual release
 
-Most releases come from the weekly auto-release above. Cut one by hand only when you need:
+Most releases come from the daily auto-release above. Cut one by hand only when you need:
 
-- a **minor or major** version bump (the weekly release only bumps the patch version), or
-- an **urgent fix** that can't wait for the next Friday run.
+- a **minor or major** version bump (the daily release only bumps the patch version), or
+- an **urgent fix** that can't wait for the next daily run.
 
 Pushing a version tag on `localstack` triggers [`build.yml`](./.github/workflows/build.yml), which
 runs the tests, builds the binaries (`make compile-lambda-linux-all`), and publishes a GitHub release
@@ -86,13 +87,13 @@ with auto-generated release notes and the `bin/*` binaries attached.
    ```
 
 > ⚠️ A manual release is published as a **full release** right away. It skips the localstack-pro
-> validation that gates weekly releases, so lambda-images picks it up immediately. To keep the gate,
+> validation that gates daily releases, so lambda-images picks it up immediately. To keep the gate,
 > mark it as a pre-release once it's published and let localstack-pro promote it:
 > ```bash
 > gh release edit v0.4.0 --prerelease
 > ```
 
-The next weekly run patch-bumps from the highest `vX.Y.Z` release, so after `v0.4.0` it releases
+The next daily run patch-bumps from the highest `vX.Y.Z` release, so after `v0.4.0` it releases
 `v0.4.1`.
 
 > The `.github/workflows/release.yml` ("Release") workflow is **legacy** and is not used for

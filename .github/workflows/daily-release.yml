@@ -1,11 +1,11 @@
-# Weekly auto-release: patch-bumps and publishes if there are new commits on localstack.
-name: Weekly Release
+# Daily auto-release: patch-bumps and publishes if Go code or dependencies changed on localstack.
+name: Daily Release
 
 on:
   schedule:
-    # Fridays 06:00 UTC. The release is a pre-release until localstack-pro validates and promotes it,
+    # Daily 06:00 UTC, ahead of localstack-pro's 07:00 bump run. The release is a pre-release until localstack-pro validates and promotes it,
     # which is what gates the downstream lambda-images bump.
-    - cron: '0 6 * * 5'
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       dryRun:
@@ -43,14 +43,15 @@ jobs:
           if [ -z "$latest" ]; then
             echo "::error::No published vX.Y.Z release found to bump from." && exit 1
           fi
-          count=$(git rev-list "${latest}..HEAD" --count)
+          # Only changes that end up in the binaries; CI or docs commits alone do not cut a release.
+          count=$(git rev-list "${latest}..HEAD" --count -- go.mod go.sum '*.go' Makefile)
           ver=${latest#v}
           IFS=. read -r major minor patch <<< "$ver"
           next="v${major}.${minor}.$((patch + 1))"
           should_release=true
           if [ "$count" = "0" ]; then
             should_release=false
-            echo "No new commits since $latest; nothing to release."
+            echo "No Go code or dependency changes since $latest; nothing to release."
           fi
           if [ "${{ inputs.dryRun }}" = "true" ]; then
             should_release=false
@@ -60,7 +61,7 @@ jobs:
             echo "next=$next"
             echo "should_release=$should_release"
           } >> "$GITHUB_OUTPUT"
-          echo "Latest release: $latest | new commits since: $count | next: $next | release: $should_release"
+          echo "Latest release: $latest | relevant commits since: $count | next: $next | release: $should_release"
 
   release:
     needs: version
@@ -75,7 +76,7 @@ jobs:
       prerelease: true
 
   notify:
-    name: Report a broken weekly release
+    name: Report a broken daily release
     if: always() && (needs.version.result == 'failure' || needs.release.result == 'failure')
     runs-on: ubuntu-latest
     needs:
@@ -95,7 +96,7 @@ jobs:
       - name: "Send Message"
         uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
         env:
-          MESSAGE: '_*Weekly RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:'
+          MESSAGE: '_*Daily RIE release failed*_ :turtle-headache::broken_heart:\n\nNo new pre-release was published, so CVE remediation is stalled until this is fixed. Investigate the failed workflow run <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|here> :mag_right:'
         with:
           webhook: ${{ secrets.COSY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
